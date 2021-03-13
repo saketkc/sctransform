@@ -140,7 +140,7 @@ vst <- function(umi,
   }
 
   # Check for suggested package
-  if (method == "glmGamPoi") {
+  if (method %in% c("glmGamPoi", "glmGamPoi2")) {
     glmGamPoi_check <- requireNamespace("glmGamPoi", quietly = TRUE)
     if (!glmGamPoi_check){
       stop('Please install the glmGamPoi package. See https://github.com/const-ae/glmGamPoi for details.')
@@ -178,6 +178,8 @@ vst <- function(umi,
   genes <- rownames(umi)[genes_cell_count >= min_cells]
   umi <- umi[genes, ]
   genes_log_gmean <- log10(row_gmean(umi, eps = gmean_eps))
+  genes_amean <- rowMeans(umi)
+  genes_var <- row_var(umi)
   
   if (!do_regularize && !is.null(n_genes)) {
     if (verbosity > 0) {
@@ -203,6 +205,21 @@ vst <- function(umi,
     genes_step1 <- genes
     genes_log_gmean_step1 <- genes_log_gmean
   }
+  
+  
+  # Exclude known poisson genes from the learning step
+  
+  if (method == "glmGamPoi2"){       
+    overdispersion_factor <- genes_var - genes_amean
+    overdispersion_factor_step1 <- overdispersion_factor[genes_step1]
+    message(paste("Length step1 genes:", 
+                  length(genes_step1)))
+    index <- (overdispersion_factor_step1 > 0)
+    message(paste("Length nonpoisson genes: ", sum(index)))
+    
+    genes_step1 <-  genes_step1[index]
+    genes_log_gmean_step1 <-  genes_log_gmean[genes_step1]
+  }  
 
   data_step1 <- cell_attr[cells_step1, , drop = FALSE]
 
@@ -241,12 +258,12 @@ vst <- function(umi,
     model_pars[, 'theta'] <- pmax(model_pars[, 'theta'], min_theta)
   }
 
-
   times$reg_model_pars = Sys.time()
   if (do_regularize) {
+    adjust <- ifelse(test=(method=="glmGamPoi2"), yes=TRUE, no=FALSE)
     model_pars_fit <- reg_model_pars(model_pars, genes_log_gmean_step1, genes_log_gmean, cell_attr,
                                      batch_var, cells_step1, genes_step1, umi, bw_adjust, gmean_eps,
-                                     theta_regularization, verbosity)
+                                     theta_regularization, verbosity, glmGamPoi2=adjust)
     model_pars_outliers <- attr(model_pars_fit, 'outliers')
   } else {
     model_pars_fit <- model_pars
@@ -391,12 +408,12 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
     dimnames(model_pars) <- list(rownames(umi), c('theta', '(Intercept)', 'log_umi'))
     if (method == 'offset_shared_theta_estimate') {
       # use all genes with detection rate > 0.5 to estimate theta
-      # if there are more, use the 250 most highly expressed ones
+      # if there are more, use the theta_given most highly expressed ones
       # use at most 5000 cells (random sample)
       use_genes <- rowMeans(umi > 0) > 0.5
-      if (sum(use_genes) > 250) {
+      if (sum(use_genes) > theta_given) {
         o <- order(-row_gmean(umi[use_genes, ]))
-        use_genes <- which(use_genes)[o[1:250]]
+        use_genes <- which(use_genes)[o[1:theta_given]]
       }
       use_cells <- sample(x = ncol(umi), size = min(ncol(umi), 5000), replace = FALSE)
       if (verbosity > 0) {
@@ -472,6 +489,9 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
         if (method == "glmGamPoi") {
           return(fit_glmGamPoi(umi = umi_bin_worker, model_str = model_str, data = data_step1))
         }
+        if (method == "glmGamPoi2") {
+          return(fit_glmGamPoi2(umi = umi_bin_worker, model_str = model_str, data = data_step1))
+        }
       }
     )
     model_pars[[i]] <- do.call(rbind, par_lst)
@@ -486,6 +506,43 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
   }
   rownames(model_pars) <- genes_step1
   colnames(model_pars)[1] <- 'theta'
+
+  # adjust estimated parameters based on prior for glmGamPoi2 
+
+  if (method=="glmGamPoi2"){
+      genes_amean <- rowMeans(umi)
+      genes_var <- row_var(umi)
+      
+      genes_amean_step1 <- genes_amean[genes_step1]
+      genes_var_step1 <- genes_var[genes_step1]
+      
+      overdispersion_factor <- genes_var - genes_amean
+      overdispersion_factor_step1 <- overdispersion_factor[genes_step1]
+      message(paste("Length step1 genes:", 
+                    length(genes_step1)))
+      index <- (overdispersion_factor_step1 > 0)
+      message(paste("Length nonpoisson genes: ", sum(index)))
+      
+      stopifnot(sum(index) == length(genes_step1))
+      
+      
+      
+      predicted_theta <- genes_amean_step1^2/(genes_var_step1-genes_amean_step1)
+      actual_theta <- model_pars[genes_step1, "theta"]
+      diff_theta <- predicted_theta/actual_theta
+      model_pars <- cbind(model_pars, diff_theta)
+
+      # if the naive and estimated MLE are 1000x apart, set theta estimate to Inf
+      diff_theta_index <- rownames(model_pars[model_pars[genes_step1, "diff_theta"]< 1e-3,])
+      if (verbosity>0){
+        message("Setting estimate of", length(diff_theta_index), "genes to inf") 
+      }
+      # Replace theta by infinity
+      model_pars[diff_theta_index, 1] <- Inf
+      # drop diff_theta column
+      model_pars <- model_pars[, -dim(model_pars)[2]]
+  }
+    
   return(model_pars)
 }
 
@@ -522,8 +579,63 @@ get_model_pars_nonreg <- function(genes, bin_size, model_pars_fit, regressor_dat
 
 reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, cell_attr,
                            batch_var, cells_step1, genes_step1, umi, bw_adjust, gmean_eps,
-                           theta_regularization, verbosity) {
+                           theta_regularization, verbosity, glmGamPoi2=FALSE) {
   genes <- names(genes_log_gmean)
+  if (glmGamPoi2){
+    # exclude this from the fitting procedure entirely
+    # at the regularization step
+    # then before returning, just 
+    genes_amean <- rowMeans(umi)
+    genes_var <- row_var(umi)
+    
+    genes_amean_step1 <- genes_amean[genes_step1]
+    genes_var_step1 <- genes_var[genes_step1]
+    
+    overdispersion_factor <- genes_var - genes_amean
+    overdispersion_factor_step1 <- overdispersion_factor[genes_step1]
+    
+    all_poisson_genes <- genes[overdispersion_factor<=0]
+    poisson_genes_step1 <- genes_step1[overdispersion_factor_step1<=0]
+    if (verbosity>0){
+      message(paste("# of step1 poisson genes (variance < mean):", 
+                    length(poisson_genes_step1)))
+    }
+
+    poisson_genes2 <- rownames(model_pars[!is.finite(model_pars[, 'theta']),])
+    poisson_genes_step1 <- union(poisson_genes_step1, poisson_genes2)
+    
+    nonpoisson_genes_step1 <- setdiff(genes_step1, poisson_genes_step1)
+    
+    #genes_step1 <- nonpoisson_genes_step1
+    #model_pars <- model_pars[nonpoisson_genes_step1,]
+    #genes_log_gmean_step1 <- genes_log_gmean_step1[nonpoisson_genes_step1]
+    
+    if (verbosity>0){
+      message(paste("Total # of step1 poisson genes (theta=Inf; variance < mean):", 
+                    length(poisson_genes_step1)))
+    }
+    if (verbosity>0){
+      message(paste("Total # of poisson genes (theta=Inf; variance < mean):", 
+                    length(all_poisson_genes)))
+    }
+    
+      
+    # call offset model 
+    if (verbosity>0){
+      message(paste("Calling offset model for", length(poisson_genes_step1), "poisson genes"))
+    }
+
+    
+    vst.out.poisson <- vst(umi = umi,
+                           #cell_attr = cell_attr,
+                           n_genes = NULL, 
+                           n_cells = NULL,
+                           method = "offset", 
+                           return_gene_attr = FALSE, 
+                           theta_given = Inf)$model_pars
+    dispersion_par <- rep(0, dim(vst.out.poisson)[1])
+    vst.out.poisson <- cbind(vst.out.poisson, dispersion_par)
+  }
 
   # we don't regularize theta directly
   # prior to v0.3 we regularized log10(theta)
@@ -536,6 +648,7 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
     stop('theta_regularization ', theta_regularization, ' unknown - only log_theta and od_factor supported at the moment')
   )
 
+  model_pars_all <- model_pars 
   model_pars <- model_pars[, colnames(model_pars) != 'theta']
   model_pars <- cbind(dispersion_par, model_pars)
 
@@ -543,6 +656,11 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
   # outliers are those that do not fit the overall relationship with the mean at all
   outliers <- apply(model_pars, 2, function(y) is_outlier(y, genes_log_gmean_step1))
   outliers <- apply(outliers, 1, any)
+
+  # genes with inf estimates are also outliers 
+  is_theta_inf <- !is.finite(model_pars_all[, "theta"])
+  outliers <- outliers | is_theta_inf
+
   if (sum(outliers) > 0) {
     if (verbosity > 0) {
       message('Found ', sum(outliers), ' outliers - those will be ignored in fitting/regularization step\n')
@@ -550,6 +668,15 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
     model_pars <- model_pars[!outliers, ]
     genes_step1 <- rownames(model_pars)
     genes_log_gmean_step1 <- genes_log_gmean_step1[!outliers]
+  }
+  if (glmGamPoi2) {
+    if (verbosity > 0) {
+      message('Ignoring theta inf genes')
+    }
+    non_poisson_genes <- setdiff(rownames(model_pars), all_poisson_genes)
+    model_pars <- model_pars[non_poisson_genes, ]
+    genes_step1 <- rownames(model_pars)
+    genes_log_gmean_step1 <- genes_log_gmean_step1[non_poisson_genes]
   }
 
   # select bandwidth to be used for smoothing
@@ -573,6 +700,18 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
     for (i in 2:ncol(model_pars)) {
       model_pars_fit[o, i] <- ksmooth(x = genes_log_gmean_step1, y = model_pars[, i],
                                       x.points = x_points, bandwidth = bw, kernel='normal')$y
+      
+    }
+    for (col in colnames(model_pars)) {
+      if (glmGamPoi2){
+        #message(paste0("Total poisson genes", length(all_poisson_genes)))
+        #message(paste0("Poisson genes present", length(intersect(all_poisson_genes, rownames(vst.out.poisson) ) )))
+        #print(colnames(vst.out.poisson))
+        #print(head(vst.out.poisson))
+        stopifnot(col %in% colnames(vst.out.poisson))
+        
+        model_pars_fit[all_poisson_genes, col] <- vst.out.poisson[all_poisson_genes, col] 
+      }
     }
   } else {
     # fit / regularize per batch
@@ -599,6 +738,17 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
       }
     }
   }
+  
+  if (glmGamPoi2){
+    dispersion_par <- switch(theta_regularization,
+                             'log_theta' = rep(Inf, length(all_poisson_genes)),
+                             'od_factor' = rep(0, length(all_poisson_genes)),
+                             stop('theta_regularization ', theta_regularization, ' unknown - only log_theta and od_factor supported at the moment')
+                             )
+    model_pars_fit[all_poisson_genes, "dispersion_par"] <- dispersion_par
+  }
+        
+
 
   # back-transform dispersion parameter to theta
   theta <- switch(theta_regularization,
@@ -607,6 +757,20 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
   )
   model_pars_fit <- model_pars_fit[, colnames(model_pars_fit) != 'dispersion_par']
   model_pars_fit <- cbind(theta, model_pars_fit)
+
+  # Replace parameters with vst.out.poisson
+  if (glmGamPoi2){
+    if (verbosity > 0) {
+      message(paste('Replacing fit params for', length(all_poisson_genes),  'poisson genes by theta=Inf'))
+    }
+    #message(paste("Total poisson genes", length(all_poisson_genes)))
+    #message(paste("Poisson genes present", length(intersect(all_poisson_genes, rownames(vst.out.poisson) ) )))
+    for (col in colnames(model_pars_fit)) {
+      stopifnot(col %in% colnames(vst.out.poisson))
+      message(col)
+      model_pars_fit[all_poisson_genes, col] <- vst.out.poisson[all_poisson_genes, col] 
+      }
+  }
 
   attr(model_pars_fit, 'outliers') <- outliers
   return(model_pars_fit)

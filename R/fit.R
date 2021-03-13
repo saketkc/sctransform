@@ -82,3 +82,13 @@ fit_glmGamPoi <- function(umi, model_str, data) {
   colnames(fit$Beta)[match(x = 'Intercept', colnames(fit$Beta))] <- "(Intercept)"
   return(cbind(fit$theta, fit$Beta))
 }
+
+fit_glmGamPoi2 <- function(umi, model_str, data) {
+  fit <- glmGamPoi::glm_gp(data = umi,
+                           design = as.formula(gsub("y", "", model_str)),
+                           col_data = data,
+                           size_factors = FALSE)
+  fit$theta <- 1 / fit$overdispersions
+  colnames(fit$Beta)[match(x = 'Intercept', colnames(fit$Beta))] <- "(Intercept)"
+  return(cbind(fit$theta, fit$Beta))
+}
