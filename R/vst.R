@@ -212,10 +212,12 @@ vst <- function(umi,
   if (method == "glmGamPoi2"){       
     overdispersion_factor <- genes_var - genes_amean
     overdispersion_factor_step1 <- overdispersion_factor[genes_step1]
-    message(paste("Length step1 genes:", 
-                  length(genes_step1)))
     index <- (overdispersion_factor_step1 > 0)
-    message(paste("Length nonpoisson genes: ", sum(index)))
+    if (verbosity > 0) {
+      message(paste("Total Step1 genes:", 
+                    length(genes_step1)))
+      message(paste("Total non-poisson genes:", sum(index)))
+    }
     
     genes_step1 <-  genes_step1[index]
     genes_log_gmean_step1 <-  genes_log_gmean[genes_step1]
@@ -518,10 +520,7 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
       
       overdispersion_factor <- genes_var - genes_amean
       overdispersion_factor_step1 <- overdispersion_factor[genes_step1]
-      message(paste("Length step1 genes:", 
-                    length(genes_step1)))
       index <- (overdispersion_factor_step1 > 0)
-      message(paste("Length nonpoisson genes: ", sum(index)))
       
       stopifnot(sum(index) == length(genes_step1))
       
@@ -613,21 +612,16 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
     if (verbosity>0){
       message(paste("Total # of step1 poisson genes (theta=Inf; variance < mean):", 
                     length(poisson_genes_step1)))
-    }
-    if (verbosity>0){
       message(paste("Total # of poisson genes (theta=Inf; variance < mean):", 
                     length(all_poisson_genes)))
-    }
-    
       
     # call offset model 
-    if (verbosity>0){
       message(paste("Calling offset model for", length(poisson_genes_step1), "poisson genes"))
     }
 
     
     vst.out.poisson <- vst(umi = umi,
-                           #cell_attr = cell_attr,
+                           cell_attr = cell_attr,
                            n_genes = NULL, 
                            n_cells = NULL,
                            method = "offset", 
@@ -704,10 +698,6 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
     }
     for (col in colnames(model_pars)) {
       if (glmGamPoi2){
-        #message(paste0("Total poisson genes", length(all_poisson_genes)))
-        #message(paste0("Poisson genes present", length(intersect(all_poisson_genes, rownames(vst.out.poisson) ) )))
-        #print(colnames(vst.out.poisson))
-        #print(head(vst.out.poisson))
         stopifnot(col %in% colnames(vst.out.poisson))
         
         model_pars_fit[all_poisson_genes, col] <- vst.out.poisson[all_poisson_genes, col] 
@@ -763,11 +753,8 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
     if (verbosity > 0) {
       message(paste('Replacing fit params for', length(all_poisson_genes),  'poisson genes by theta=Inf'))
     }
-    #message(paste("Total poisson genes", length(all_poisson_genes)))
-    #message(paste("Poisson genes present", length(intersect(all_poisson_genes, rownames(vst.out.poisson) ) )))
     for (col in colnames(model_pars_fit)) {
       stopifnot(col %in% colnames(vst.out.poisson))
-      message(col)
       model_pars_fit[all_poisson_genes, col] <- vst.out.poisson[all_poisson_genes, col] 
       }
   }
