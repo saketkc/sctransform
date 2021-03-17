@@ -262,14 +262,14 @@ vst <- function(umi,
 
   times$reg_model_pars = Sys.time()
   if (do_regularize) {
-    reg_method <- NULL 
+    reg_method <- NULL
     if (method %in% c("glmGamPoi2", "glmGamPoi3")){
       reg_method <- method
     }
     #reg_method <- ifelse(test=(method %in% c("glmGamPoi2", "glmGamPoi3")), yes=method, no=FAL)
     model_pars_fit <- reg_model_pars(model_pars, genes_log_gmean_step1, genes_log_gmean, cell_attr,
                                      batch_var, cells_step1, genes_step1, umi, bw_adjust, gmean_eps,
-                                     theta_regularization, verbosity, reg_method=method)# glmGamPoi2=reg_method)
+                                     theta_regularization, verbosity, reg_method)# glmGamPoi2=reg_method)
     model_pars_outliers <- attr(model_pars_fit, 'outliers')
   } else {
     model_pars_fit <- model_pars
@@ -538,7 +538,7 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
       # if the naive and estimated MLE are 1000x apart, set theta estimate to Inf
       diff_theta_index <- rownames(model_pars[model_pars[genes_step1, "diff_theta"]< 1e-3,])
       if (verbosity>0){
-        message("Setting estimate of ", length(diff_theta_index), "genes to inf as theta_mm/theta_mle < 1e-3") 
+        message(paste("Setting estimate of ", length(diff_theta_index), "genes to inf as theta_mm/theta_mle < 1e-3"))
       }
       # Replace theta by infinity
       model_pars[diff_theta_index, 1] <- Inf
@@ -763,18 +763,21 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
       stopifnot(col %in% colnames(vst.out.poisson))
       model_pars_fit[all_poisson_genes, col] <- vst.out.poisson[all_poisson_genes, col] 
       }
+    if (reg_method=="glmGamPoi3"){
+      if (verbosity > 0) {
+        message('Replacing regularized parameter for all covariates by offset')
+      }
+      for (col in colnames(model_pars_fit)) {
+        stopifnot(col %in% colnames(vst.out.poisson))
+        all_genes <- rownames(model_pars_fit)
+        if (col %in% c("theta", "dispersion_par")){
+          next
+        }
+        model_pars_fit[all_genes, col] <- vst.out.poisson[all_genes, col] 
+      }
+    }
   }
 
-  if (reg_method=="glmGamPoi3"){
-    if (verbosity > 0) {
-      message('Replacing regularized parameter for all covariates by offset')
-    }
-    for (col in colnames(model_pars_fit)) {
-      stopifnot(col %in% colnames(vst.out.poisson))
-      all_genes <- rownames(model_pars_fit)
-      model_pars_fit[all_genes, col] <- vst.out.poisson[all_genes, col] 
-      }
-  }
 
   attr(model_pars_fit, 'outliers') <- outliers
   return(model_pars_fit)
