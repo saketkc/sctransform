@@ -140,7 +140,7 @@ vst <- function(umi,
   }
 
   # Check for suggested package
-  if (method %in% c("glmGamPoi", "glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5")) {
+  if (method %in% c("glmGamPoi", "glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi6")) {
     glmGamPoi_check <- requireNamespace("glmGamPoi", quietly = TRUE)
     if (!glmGamPoi_check){
       stop('Please install the glmGamPoi package. See https://github.com/const-ae/glmGamPoi for details.')
@@ -209,7 +209,7 @@ vst <- function(umi,
   
   # Exclude known poisson genes from the learning step
   
-  if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5")){       
+  if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi6")){       
     overdispersion_factor <- genes_var - genes_amean
     overdispersion_factor_step1 <- overdispersion_factor[genes_step1]
     index <- (overdispersion_factor_step1 > 0)
@@ -263,7 +263,7 @@ vst <- function(umi,
   times$reg_model_pars = Sys.time()
   if (do_regularize) {
     reg_method <- NULL
-    if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5")){
+    if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi6")){
       reg_method <- method
     }
     #reg_method <- ifelse(test=(method %in% c("glmGamPoi2", "glmGamPoi3")), yes=method, no=FAL)
@@ -498,6 +498,12 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
         if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5")) {
           return(fit_glmGamPoi2(umi = umi_bin_worker, model_str = model_str, data = data_step1))
         }
+        if (method %in% c("glmGamPoi6")) {
+          # log_umi as offset (handled internally)
+          # TODO: this does away with any batch_var and essentially resets the model_str
+          return(fit_glmGamPoi6(umi = umi_bin_worker, model_str = model_str, data = data_step1))
+        }
+
       }
     )
     model_pars[[i]] <- do.call(rbind, par_lst)
@@ -515,7 +521,7 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
 
   # adjust estimated parameters based on prior for glmGamPoi2 
 
-  if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5") ){
+  if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi6") ){
       genes_amean <- rowMeans(umi)
       genes_var <- row_var(umi)
       
@@ -759,6 +765,8 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
     if (verbosity > 0) {
       message(paste('Replacing fit params for', length(all_poisson_genes),  'poisson genes by theta=Inf'))
     }
+    # By default replace poisson genes with offset model 
+    # TODO: Handle glmGamPoi6?
     for (col in colnames(model_pars_fit)) {
       stopifnot(col %in% colnames(vst.out.poisson))
       model_pars_fit[all_poisson_genes, col] <- vst.out.poisson[all_poisson_genes, col] 
@@ -778,7 +786,7 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
       }
     }
     
-    ## glmGamPoi4 = Replace all betas by offset
+    ## glmGamPoi4 = Replace all intercept by offset
     if (reg_method=="glmGamPoi4"){
       col <- "(Intercept)"
       if (verbosity > 0) {
@@ -789,7 +797,7 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
       model_pars_fit[all_genes, col] <- vst.out.poisson[all_genes, col] 
     }
     
-    ## glmGamPoi4 = Replace all betas by offset
+    ## glmGamPoi5 = Replace all slopes by offset
     if (reg_method=="glmGamPoi5"){
       col <- "log_umi"
       if (verbosity > 0) {

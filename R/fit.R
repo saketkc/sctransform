@@ -92,3 +92,25 @@ fit_glmGamPoi2 <- function(umi, model_str, data) {
   colnames(fit$Beta)[match(x = 'Intercept', colnames(fit$Beta))] <- "(Intercept)"
   return(cbind(fit$theta, fit$Beta))
 }
+
+fit_glmGamPoi6 <- function(umi, model_str, data) {
+  # only intercept varies 
+  # TODO does away with batch_var which needs to be handled
+  new_formula <- "~ 1"
+  log10_umi <- data$log_umi 
+  stopifnot(!is.null(log10_umi))
+  log_umi <- log(10^log10_umi)
+
+  fit <- glmGamPoi::glm_gp(data = umi,
+                           design = as.formula(new_formula),#gsub("y", "", model_str)),
+                           col_data = data,
+                           offset = log_umi,
+                           size_factors = FALSE)
+  fit$theta <- 1 / fit$overdispersions
+  # TODO does away with batch_var which needs to be handled
+  model_pars <- cbind(fit$theta,
+                       fit$Beta[, "Intercept"],
+                        rep(log(10), nrow(umi)))
+  dimnames(model_pars) <- list(rownames(umi), c('theta', '(Intercept)', 'log_umi'))
+  return(model_pars)
+}
