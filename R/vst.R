@@ -140,7 +140,7 @@ vst <- function(umi,
   }
 
   # Check for suggested package
-  if (method %in% c("glmGamPoi", "glmGamPoi2", "glmGamPoi3")) {
+  if (method %in% c("glmGamPoi", "glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5")) {
     glmGamPoi_check <- requireNamespace("glmGamPoi", quietly = TRUE)
     if (!glmGamPoi_check){
       stop('Please install the glmGamPoi package. See https://github.com/const-ae/glmGamPoi for details.')
@@ -209,7 +209,7 @@ vst <- function(umi,
   
   # Exclude known poisson genes from the learning step
   
-  if (method %in% c("glmGamPoi2", "glmGamPoi3")){       
+  if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5")){       
     overdispersion_factor <- genes_var - genes_amean
     overdispersion_factor_step1 <- overdispersion_factor[genes_step1]
     index <- (overdispersion_factor_step1 > 0)
@@ -263,13 +263,13 @@ vst <- function(umi,
   times$reg_model_pars = Sys.time()
   if (do_regularize) {
     reg_method <- NULL
-    if (method %in% c("glmGamPoi2", "glmGamPoi3")){
+    if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5")){
       reg_method <- method
     }
     #reg_method <- ifelse(test=(method %in% c("glmGamPoi2", "glmGamPoi3")), yes=method, no=FAL)
     model_pars_fit <- reg_model_pars(model_pars, genes_log_gmean_step1, genes_log_gmean, cell_attr,
                                      batch_var, cells_step1, genes_step1, umi, bw_adjust, gmean_eps,
-                                     theta_regularization, verbosity, reg_method)# glmGamPoi2=reg_method)
+                                     theta_regularization, verbosity, reg_method)
     model_pars_outliers <- attr(model_pars_fit, 'outliers')
   } else {
     model_pars_fit <- model_pars
@@ -495,7 +495,7 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
         if (method == "glmGamPoi") {
           return(fit_glmGamPoi(umi = umi_bin_worker, model_str = model_str, data = data_step1))
         }
-        if (method %in% c("glmGamPoi2", "glmGamPoi3")) {
+        if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5")) {
           return(fit_glmGamPoi2(umi = umi_bin_worker, model_str = model_str, data = data_step1))
         }
       }
@@ -515,7 +515,7 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
 
   # adjust estimated parameters based on prior for glmGamPoi2 
 
-  if (method %in% c("glmGamPoi2", "glmGamPoi3") ){
+  if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5") ){
       genes_amean <- rowMeans(umi)
       genes_var <- row_var(umi)
       
@@ -763,6 +763,7 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
       stopifnot(col %in% colnames(vst.out.poisson))
       model_pars_fit[all_poisson_genes, col] <- vst.out.poisson[all_poisson_genes, col] 
       }
+    ## glmGamPoi3 = Replace all betas by offset
     if (reg_method=="glmGamPoi3"){
       if (verbosity > 0) {
         message('Replacing regularized parameter for all covariates by offset')
@@ -775,6 +776,28 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
         }
         model_pars_fit[all_genes, col] <- vst.out.poisson[all_genes, col] 
       }
+    }
+    
+    ## glmGamPoi4 = Replace all betas by offset
+    if (reg_method=="glmGamPoi4"){
+      col <- "(Intercept)"
+      if (verbosity > 0) {
+        message(paste0('Replacing regularized parameter ', col, ' by offset'))
+      }
+      stopifnot(col %in% colnames(vst.out.poisson))
+      all_genes <- rownames(model_pars_fit)
+      model_pars_fit[all_genes, col] <- vst.out.poisson[all_genes, col] 
+    }
+    
+    ## glmGamPoi4 = Replace all betas by offset
+    if (reg_method=="glmGamPoi5"){
+      col <- "log_umi"
+      if (verbosity > 0) {
+        message(paste0('Replacing regularized parameter ', col, ' by offset'))
+      }
+      stopifnot(col %in% colnames(vst.out.poisson))
+      all_genes <- rownames(model_pars_fit)
+      model_pars_fit[all_genes, col] <- vst.out.poisson[all_genes, col] 
     }
   }
 
