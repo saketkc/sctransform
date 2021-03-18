@@ -140,7 +140,7 @@ vst <- function(umi,
   }
 
   # Check for suggested package
-  if (method %in% c("glmGamPoi", "glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi6")) {
+  if (method %in% c("glmGamPoi", "glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi6", "glmGamPoi7")) {
     glmGamPoi_check <- requireNamespace("glmGamPoi", quietly = TRUE)
     if (!glmGamPoi_check){
       stop('Please install the glmGamPoi package. See https://github.com/const-ae/glmGamPoi for details.')
@@ -209,7 +209,7 @@ vst <- function(umi,
   
   # Exclude known poisson genes from the learning step
   
-  if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi6")){       
+  if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi6", "glmGamPoi7")){       
     overdispersion_factor <- genes_var - genes_amean
     overdispersion_factor_step1 <- overdispersion_factor[genes_step1]
     index <- (overdispersion_factor_step1 > 0)
@@ -263,7 +263,7 @@ vst <- function(umi,
   times$reg_model_pars = Sys.time()
   if (do_regularize) {
     reg_method <- NULL
-    if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi6")){
+    if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi6", "glmGamPoi7")){
       reg_method <- method
     }
     #reg_method <- ifelse(test=(method %in% c("glmGamPoi2", "glmGamPoi3")), yes=method, no=FAL)
@@ -404,6 +404,35 @@ vst <- function(umi,
 get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
                            method, data_step1, theta_given, theta_estimation_fun,
                            verbosity) {
+  # 
+  if (method == "glmGamPoi7") {
+
+    gene_mean <- rowMeans(umi[genes_step1, cells_step1])
+    mean_cell_sum <- mean(colSums(umi[genes_step1, cells_step1]))
+
+    model_pars <- cbind(rep(NA, length(genes_step1)),
+                        log(gene_mean) - log(mean_cell_sum),
+                        rep(log(10), length(genes_step1))
+                        )
+    dimnames(model_pars) <- list(genes_step1, c('theta', '(Intercept)', 'log_umi'))
+
+    y <- as.matrix(umi[genes_step1, cells_step1])
+    regressor_data <- model.matrix(as.formula(gsub('^y', '', model_str)), 
+                                   data_step1[cells_step1, ])
+
+    mu <- exp(tcrossprod(model_pars[genes_step1, -1, drop=FALSE], regressor_data))
+
+    if (requireNamespace("glmGamPoi", quietly = TRUE) && getNamespaceVersion('glmGamPoi') >= '1.2') {
+      message("Using model glmGamPoi7")
+      theta <- fit_glmGamPoi7(y, mu)
+    } else {
+      theta <- sapply(1:nrow(y), function(i) {
+        as.numeric(MASS::theta.ml(y = y[i, ], mu = mu[i, ], limit = 100))
+      })
+    }
+    model_pars[, 'theta'] <- theta
+    return(model_pars)
+  }
   # Special case offset model with one theta for all genes
   if (startsWith(x = method, prefix = 'offset')) {
     gene_mean <- rowMeans(umi)
@@ -495,7 +524,7 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
         if (method == "glmGamPoi") {
           return(fit_glmGamPoi(umi = umi_bin_worker, model_str = model_str, data = data_step1))
         }
-        if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5")) {
+        if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi7")) {
           return(fit_glmGamPoi2(umi = umi_bin_worker, model_str = model_str, data = data_step1))
         }
         if (method %in% c("glmGamPoi6")) {
@@ -521,7 +550,7 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
 
   # adjust estimated parameters based on prior for glmGamPoi2 
 
-  if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi6") ){
+  if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi6", "glmGamPoi7") ){
       genes_amean <- rowMeans(umi)
       genes_var <- row_var(umi)
       
