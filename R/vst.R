@@ -208,8 +208,7 @@ vst <- function(umi,
   
   
   # Exclude known poisson genes from the learning step
-  
-  if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi6", "glmGamPoi7")){       
+  if (do_regularize && method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi6", "glmGamPoi7")){       
     overdispersion_factor <- genes_var - genes_amean
     overdispersion_factor_step1 <- overdispersion_factor[genes_step1]
     index <- (overdispersion_factor_step1 > 0)
@@ -273,6 +272,9 @@ vst <- function(umi,
     model_pars_outliers <- attr(model_pars_fit, 'outliers')
   } else {
     model_pars_fit <- model_pars
+    message("UMI dim:", dim(umi))
+    message("Model pars dim", dim(model_pars))
+    message("Total genes", length(genes))
     model_pars_outliers <- rep(FALSE, nrow(model_pars))
   }
 
@@ -408,7 +410,8 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
   if (method == "glmGamPoi7") {
 
     gene_mean <- rowMeans(umi[genes_step1, cells_step1])
-    mean_cell_sum <- mean(colSums(umi[genes_step1, cells_step1]))
+    #mean_cell_sum <- mean(colSums(umi[genes_step1, cells_step1]))
+    mean_cell_sum <- mean(colSums(umi[, cells_step1]))
 
     model_pars <- cbind(rep(NA, length(genes_step1)),
                         log(gene_mean) - log(mean_cell_sum),
