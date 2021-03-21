@@ -272,9 +272,6 @@ vst <- function(umi,
     model_pars_outliers <- attr(model_pars_fit, 'outliers')
   } else {
     model_pars_fit <- model_pars
-    message("UMI dim:", dim(umi))
-    message("Model pars dim", dim(model_pars))
-    message("Total genes", length(genes))
     model_pars_outliers <- rep(FALSE, nrow(model_pars))
   }
 
