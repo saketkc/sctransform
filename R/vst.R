@@ -433,6 +433,71 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
     model_pars[, 'theta'] <- theta
     return(model_pars)
   }
+
+  if (method == "glmGamPoi8"){
+    gene_mean <- rowMeans(umi)
+    mean_cell_sum <- mean(colSums(umi))
+
+    model_pars <- cbind(rep(NA, length(genes_step1)),
+                        log(gene_mean) - log(mean_cell_sum),
+                        rep(log(10), length(genes_step1))
+                        )
+    dimnames(model_pars) <- list(genes_step1, c('theta', '(Intercept)', 'log_umi'))
+
+    y <- as.matrix(umi[genes_step1, cells_step1])
+    regressor_data <- model.matrix(as.formula(gsub('^y', '', model_str)), 
+                                   data_step1[cells_step1, ])
+    mu <- exp(tcrossprod(model_pars[genes_step1, -1, drop=FALSE], regressor_data))
+    bin_ind <- ceiling(x = 1:length(x = genes_step1) / bin_size)
+    max_bin <- max(bin_ind)
+    if (verbosity > 0) {
+      message('Get Negative Binomial regression parameters per gene')
+      message('Using ', length(x = genes_step1), ' genes, ', length(x = cells_step1), ' cells')
+    }
+
+    if (verbosity > 1) {
+      pb <- txtProgressBar(min = 0, max = max_bin, style = 3)
+    }
+    thetas <- list()
+    for (i in 1:max_bin) {
+      genes_bin_regress <- genes_step1[bin_ind == i]
+
+      umi_bin <- as.matrix(umi[genes_bin_regress, cells_step1, drop=FALSE])
+      mu_bin  <- as.matrix(mu[genes_bin_regress, cells_step1, drop=FALSE])
+  
+      # umi_bin is a matrix of counts - we want a model per row
+      # if there are multiple workers, split up the matrix in chunks of n rows
+      # where n is the number of workers
+      n_workers <- 1
+      if (future::supportsMulticore()) {
+        n_workers <- future::nbrOfWorkers()
+      }
+      genes_per_worker <- nrow(umi_bin) / n_workers + .Machine$double.eps
+      index_vec <- 1:nrow(umi_bin)
+      index_lst <- split(index_vec, ceiling(index_vec/genes_per_worker))
+
+      # the index list will have at most n_workers entries, each one defining which genes to work on
+      par_lst <- future_lapply(
+        X = index_lst,
+        FUN = function(indices) {
+          umi_bin_worker  <-  umi_bin[indices, , drop = FALSE]
+          mean_bin_worker <-  mu_bin[indices, , drop = FALSE]
+          return(fit_glmGamPoi8(umi = umi_bin_worker, mean = mean_bin_worker))
+        }
+        )
+        thetas[[i]] <- do.call(rbind, par_lst)
+        if (verbosity > 1) {
+          setTxtProgressBar(pb, i)
+        }
+      }
+      thetas <- do.call(rbind, thetas)
+      if (verbosity > 1) {
+        close(pb)
+      }
+      model_pars[, "theta"] <- thetas$theta
+      return(model_pars)
+  }
+
   # Special case offset model with one theta for all genes
   if (startsWith(x = method, prefix = 'offset')) {
     gene_mean <- rowMeans(umi)
@@ -524,7 +589,7 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
         if (method == "glmGamPoi") {
           return(fit_glmGamPoi(umi = umi_bin_worker, model_str = model_str, data = data_step1))
         }
-        if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi7")) {
+        if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5")) {
           return(fit_glmGamPoi2(umi = umi_bin_worker, model_str = model_str, data = data_step1))
         }
         if (method %in% c("glmGamPoi6")) {
@@ -802,8 +867,9 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
       stopifnot(col %in% colnames(vst.out.poisson))
       model_pars_fit[all_poisson_genes, col] <- vst.out.poisson[all_poisson_genes, col] 
       }
-    ## glmGamPoi3 = Replace all betas by offset
-    if (reg_method=="glmGamPoi3"){
+    ## glmGamPoi3 or glmGamPoi7 = Replace all betas by offset
+    #if (reg_method %in% c("glmGamPoi3", "glmGamPoi7") ){
+    if (reg_method %in% c("glmGamPoi3") ){
       if (verbosity > 0) {
         message('Replacing regularized parameter for all covariates by offset')
       }

@@ -132,3 +132,20 @@ fit_glmGamPoi7 <- function(umi, mean){
   theta <- 1 / fit$estimate
   return (theta)
 }
+
+fit_glmGamPoi8 <- function(umi, mean){
+  
+  fit <- glmGamPoi::overdispersion_mle(umi,
+                                       mean,
+                                       model_matrix = NULL,
+                                       # TODO: not sure if it makes a difference?
+                                       do_cox_reid_adjustment = TRUE, #!is.null(model_matrix),
+                                       global_estimate = FALSE,
+                                       subsample = FALSE,
+                                       max_iter = 200,
+                                       verbose = FALSE
+                                       )
+
+  theta <- 1 / fit$estimate
+  return (data.frame(theta=theta))
+}
