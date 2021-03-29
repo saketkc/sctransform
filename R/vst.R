@@ -119,6 +119,9 @@ vst <- function(umi,
                 gmean_eps = 1,
                 theta_estimation_fun = 'theta.ml',
                 theta_given = NULL,
+                exclude_poisson = FALSE,
+                fix_slope = FALSE,
+                fix_intercept = FALSE,
                 verbosity = 2,
                 verbose = NULL,
                 show_progress = NULL) {
@@ -145,6 +148,19 @@ vst <- function(umi,
     if (!glmGamPoi_check){
       stop('Please install the glmGamPoi package. See https://github.com/const-ae/glmGamPoi for details.')
     }
+  }
+
+  if (fix_slope | fix_intercept){
+     gene_mean <- rowMeans(umi)
+     mean_cell_sum <- mean(colSums(umi))
+     model_pars <- cbind(rep(NA, length(genes_step1)),
+                         log(gene_mean) - log(mean_cell_sum),
+                         rep(log(10), length(genes_step1)))
+    dimnames(model_pars) <- list(genes_step1, c('theta', '(Intercept)', 'log_umi'))
+    y <- as.matrix(umi[genes_step1, cells_step1])
+    regressor_data <- model.matrix(as.formula(gsub('^y', '', model_str)), 
+    data_step1[cells_step1, ])
+    mu <- exp(tcrossprod(model_pars[genes_step1, -1, drop=FALSE], regressor_data))
   }
   
   # Special case offset model - override most parameters
@@ -204,6 +220,25 @@ vst <- function(umi,
     genes_log_gmean_step1 <- genes_log_gmean
   }
 
+   # Exclude known poisson genes from the learning step
+  if (do_regularize && exclude_poisson){       
+    genes_amean <- rowMeans(umi)
+    genes_var <- row_var(umi)
+    overdispersion_factor <- genes_var - genes_amean
+    overdispersion_factor_step1 <- overdispersion_factor[genes_step1]
+    is_overdispersed <- (overdispersion_factor_step1 > 0)
+    if (verbosity > 0) {
+      message(paste("Total Step 1 genes:", 
+                                        length(genes_step1)))
+      message(paste("Total overdispersed genes:", sum(is_overdispersed)))
+      message(paste("Excluding", length(genes_step1) - sum(is_overdispersed), 
+                    "genes from Step 1 because they are not overdispersed."))
+    }
+    
+    genes_step1 <-  genes_step1[is_overdispersed]
+    genes_log_gmean_step1 <-  genes_log_gmean[genes_step1]
+  }  
+
   data_step1 <- cell_attr[cells_step1, , drop = FALSE]
 
   if (!is.null(n_genes) && n_genes < length(genes_step1)) {
@@ -230,7 +265,8 @@ vst <- function(umi,
   times$get_model_pars = Sys.time()
   model_pars <- get_model_pars(genes_step1, bin_size, umi, model_str, cells_step1,
                                method, data_step1, theta_given, theta_estimation_fun,
-                               verbosity)
+                               exclude_poisson, 
+                               fix_intercept, fix_slope, verbosity)
   # make sure theta is not too small
   min_theta <- 1e-7
   if (any(model_pars[, 'theta'] < min_theta)) {
@@ -246,7 +282,7 @@ vst <- function(umi,
   if (do_regularize) {
     model_pars_fit <- reg_model_pars(model_pars, genes_log_gmean_step1, genes_log_gmean, cell_attr,
                                      batch_var, cells_step1, genes_step1, umi, bw_adjust, gmean_eps,
-                                     theta_regularization, verbosity)
+                                     theta_regularization, exclude_poisson, fix_slope, fix_intercept, verbosity)
     model_pars_outliers <- attr(model_pars_fit, 'outliers')
   } else {
     model_pars_fit <- model_pars
@@ -380,7 +416,8 @@ vst <- function(umi,
 
 get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
                            method, data_step1, theta_given, theta_estimation_fun,
-                           verbosity) {
+                           exclude_poisson = FALSE, 
+                           fix_intercept = FALSE, fix_slope = FALSE, verbosity = 0) {
   # Special case offset model with one theta for all genes
   if (startsWith(x = method, prefix = 'offset')) {
     gene_mean <- rowMeans(umi)
@@ -433,6 +470,9 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
   for (i in 1:max_bin) {
     genes_bin_regress <- genes_step1[bin_ind == i]
     umi_bin <- as.matrix(umi[genes_bin_regress, cells_step1, drop=FALSE])
+    if (fix_slope | fix_intercept) {
+      mu_bin <-  as.matrix(mu[genes_bin_regress, cells_step1, drop=FALSE])
+    }
     if (!is.null(theta_given)) {
       theta_given_bin <- theta_given[genes_bin_regress]
     }
@@ -470,8 +510,13 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
           return(fit_nb(umi = umi_bin_worker, model_str = model_str, data = data_step1))
         }
         if (method == "glmGamPoi") {
-          return(fit_glmGamPoi(umi = umi_bin_worker, model_str = model_str, data = data_step1))
+          if (fix_slope | fix_intercept){
+            return(fit_overdisp_mle(umi = umi_bin_worker, mu = mu_bin_worker, 
+                                    intercept = intercept_bin_worker, slope = slope_bin_worker))
+          }
+          return(fit_glmGamPoi(umi = umi_bin_worker, model_str = model_str, data = data_step1, inf_theta = exclude_poisson))
         }
+
       }
     )
     model_pars[[i]] <- do.call(rbind, par_lst)
@@ -486,6 +531,34 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
   }
   rownames(model_pars) <- genes_step1
   colnames(model_pars)[1] <- 'theta'
+  
+  if (exclude_poisson){
+    genes_amean <- rowMeans(umi)
+    genes_var <- row_var(umi)
+    
+    genes_amean_step1 <- genes_amean[genes_step1]
+    genes_var_step1 <- genes_var[genes_step1]
+
+    ## overdispersion_factor <- genes_var - genes_amean
+    ## overdispersion_factor_step1 <- overdispersion_factor[genes_step1]
+    ## is_overdispersed <- (overdispersion_factor_step1 > 0)
+
+    predicted_theta <- genes_amean_step1^2/(genes_var_step1-genes_amean_step1)
+    actual_theta <- model_pars[genes_step1, "theta"]
+    diff_theta <- predicted_theta/actual_theta
+    model_pars <- cbind(model_pars, diff_theta)
+
+    # if the naive and estimated MLE are 1000x apart, set theta estimate to Inf
+    diff_theta_index <- rownames(model_pars[model_pars[genes_step1, "diff_theta"]< 1e-3,])
+    if (verbosity>0){
+     message(paste("Setting estimate of ", length(diff_theta_index), "genes to inf as theta_mm/theta_mle < 1e-3"))
+    }
+    # Replace theta by infinity
+    model_pars[diff_theta_index, 1] <- Inf
+    # drop diff_theta column
+    model_pars <- model_pars[, -dim(model_pars)[2]]
+  }
+  
   return(model_pars)
 }
 
@@ -522,8 +595,60 @@ get_model_pars_nonreg <- function(genes, bin_size, model_pars_fit, regressor_dat
 
 reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, cell_attr,
                            batch_var, cells_step1, genes_step1, umi, bw_adjust, gmean_eps,
-                           theta_regularization, verbosity) {
+                           theta_regularization, exclude_poisson = FALSE, 
+                           fix_intercept = FALSE, fix_slope = FALSE, verbosity = 0) {
   genes <- names(genes_log_gmean)
+  if (exclude_poisson){
+      # exclude this from the fitting procedure entirely
+      # at the regularization step
+      # then before returning, just 
+      genes_amean <- rowMeans(umi)
+      genes_var <- row_var(umi)
+      
+      genes_amean_step1 <- genes_amean[genes_step1]
+      genes_var_step1 <- genes_var[genes_step1]
+      
+      overdispersion_factor <- genes_var - genes_amean
+      overdispersion_factor_step1 <- overdispersion_factor[genes_step1]
+      
+      all_poisson_genes <- genes[overdispersion_factor<=0]
+      poisson_genes_step1 <- genes_step1[overdispersion_factor_step1<=0]
+      if (verbosity>0){
+        message(paste("# of step1 poisson genes (variance < mean):", 
+                                          length(poisson_genes_step1)))
+      }
+  
+      poisson_genes2 <- rownames(model_pars[!is.finite(model_pars[, 'theta']),])
+      poisson_genes_step1 <- union(poisson_genes_step1, poisson_genes2)
+      
+      overdispersed_genes_step1 <- setdiff(genes_step1, poisson_genes_step1)
+      
+      #genes_step1 <- overdispersed_genes_step1
+      #model_pars <- model_pars[overdispersed_genes_step1,]
+      #genes_log_gmean_step1 <- genes_log_gmean_step1[overdispersed_genes_step1]
+      
+      if (verbosity>0){
+        message(paste("Total # of Step1 poisson genes (theta=Inf; variance < mean):", 
+                                          length(poisson_genes_step1)))
+        message(paste("Total # of poisson genes (theta=Inf; variance < mean):", 
+                                          length(all_poisson_genes)))
+        
+      # call offset model 
+        message(paste("Calling offset model for all", length(all_poisson_genes), "poisson genes"))
+      }
+  
+      
+      vst_out_poisson <- vst(umi = umi,
+                             cell_attr = cell_attr,
+                             n_genes = NULL, 
+                             n_cells = NULL,
+                             method = "offset", 
+                             return_gene_attr = FALSE, 
+                             theta_given = Inf)$model_pars
+      dispersion_par <- rep(0, dim(vst_out_poisson)[1])
+      vst_out_poisson <- cbind(vst_out_poisson, dispersion_par)
+    }
+
 
   # we don't regularize theta directly
   # prior to v0.3 we regularized log10(theta)
@@ -536,6 +661,8 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
     stop('theta_regularization ', theta_regularization, ' unknown - only log_theta and od_factor supported at the moment')
   )
 
+  model_pars_all <- model_pars 
+
   model_pars <- model_pars[, colnames(model_pars) != 'theta']
   model_pars <- cbind(dispersion_par, model_pars)
 
@@ -543,6 +670,13 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
   # outliers are those that do not fit the overall relationship with the mean at all
   outliers <- apply(model_pars, 2, function(y) is_outlier(y, genes_log_gmean_step1))
   outliers <- apply(outliers, 1, any)
+
+  # also call theta=inf as outliers 
+  if (exclude_poisson){
+    is_theta_inf <- !is.finite(model_pars_all[, "theta"])
+    outliers <- outliers | is_theta_inf
+  }
+
   if (sum(outliers) > 0) {
     if (verbosity > 0) {
       message('Found ', sum(outliers), ' outliers - those will be ignored in fitting/regularization step\n')
@@ -550,6 +684,17 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
     model_pars <- model_pars[!outliers, ]
     genes_step1 <- rownames(model_pars)
     genes_log_gmean_step1 <- genes_log_gmean_step1[!outliers]
+  }
+
+
+  if (exclude_poisson){
+    if (verbosity > 0) {
+      message('Ignoring theta inf genes')
+    }
+    overdispersed_genes <- setdiff(rownames(model_pars), all_poisson_genes)
+    model_pars <- model_pars[overdispersed_genes, ]
+    genes_step1 <- rownames(model_pars)
+    genes_log_gmean_step1 <- genes_log_gmean_step1[overdispersed_genes]
   }
 
   # select bandwidth to be used for smoothing
@@ -600,6 +745,15 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
     }
   }
 
+  if (exclude_poisson){
+    dispersion_par <- switch(theta_regularization,
+                            'log_theta' = rep(Inf, length(all_poisson_genes)),
+                            'od_factor' = rep(0, length(all_poisson_genes)),
+                            stop('theta_regularization ', theta_regularization, ' unknown - only log_theta and od_factor supported at the moment')
+                            )
+    model_pars_fit[all_poisson_genes, "dispersion_par"] <- dispersion_par
+  }
+
   # back-transform dispersion parameter to theta
   theta <- switch(theta_regularization,
     'log_theta' = 10^model_pars_fit[, 'dispersion_par'],
@@ -607,6 +761,15 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
   )
   model_pars_fit <- model_pars_fit[, colnames(model_pars_fit) != 'dispersion_par']
   model_pars_fit <- cbind(theta, model_pars_fit)
+  if (exclude_poisson){
+    if (verbosity > 0) {
+      message(paste('Replacing fit params for', length(all_poisson_genes),  'poisson genes by theta=Inf'))
+    }
+    for (col in colnames(model_pars_fit)){
+      stopifnot(col %in% colnames(vst_out_poisson))
+      model_pars_fit[all_poisson_genes, col] <- vst_out_poisson[all_poisson_genes, col] 
+    }
+  }
 
   attr(model_pars_fit, 'outliers') <- outliers
   return(model_pars_fit)
