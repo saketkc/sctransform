@@ -262,7 +262,7 @@ vst <- function(umi,
   times$reg_model_pars = Sys.time()
   if (do_regularize) {
     reg_method <- NULL
-    if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi6", "glmGamPoi7")){
+    if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi6", "glmGamPoi7", "glmGamPoi9", "glmGamPoi10")){
       reg_method <- method
     }
     #reg_method <- ifelse(test=(method %in% c("glmGamPoi2", "glmGamPoi3")), yes=method, no=FAL)
@@ -434,7 +434,7 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
     return(model_pars)
   }
 
-  if (method == "glmGamPoi8"){
+  if (method %in% c("glmGamPoi8", "glmGamPoi9", "glmGamPoi10")){
     gene_mean <- rowMeans(umi)
     mean_cell_sum <- mean(colSums(umi))
 
@@ -615,7 +615,7 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
 
   # adjust estimated parameters based on prior for glmGamPoi2 
 
-  if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi6", "glmGamPoi7") ){
+  if (method %in% c("glmGamPoi2", "glmGamPoi3", "glmGamPoi4", "glmGamPoi5", "glmGamPoi6", "glmGamPoi7", "glmGamPoi8", "glmGamPoi9") ){
       genes_amean <- rowMeans(umi)
       genes_var <- row_var(umi)
       
@@ -904,6 +904,29 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
       all_genes <- rownames(model_pars_fit)
       model_pars_fit[all_genes, col] <- vst.out.poisson[all_genes, col] 
     }
+
+    ## glmGamPoi9 = Replace all slopes by offset 
+    if (reg_method=="glmGamPoi9"){
+      col <- "log_umi"
+      if (verbosity > 0) {
+        message(paste0('Replacing regularized parameter ', col, ' by offset'))
+      }
+      stopifnot(col %in% colnames(vst.out.poisson))
+      all_genes <- rownames(model_pars_fit)
+      model_pars_fit[all_genes, col] <- vst.out.poisson[all_genes, col] 
+    }
+    message(reg_method)
+    if (reg_method=="glmGamPoi10"){
+      for (col in c("(Intercept)",  "log_umi")){
+        if (verbosity > 0) {
+          message(paste0('Replacing regularized parameter ', col, ' by offset'))
+        }
+        stopifnot(col %in% colnames(vst.out.poisson))
+        all_genes <- rownames(model_pars_fit)
+        model_pars_fit[all_genes, col] <- vst.out.poisson[all_genes, col] 
+      }
+    }
+
   }
 
 
