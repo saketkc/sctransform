@@ -1,0 +1,109 @@
+---
+title: "Fixed Slope"
+author: "Saket Choudhary"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    highlight: pygments
+---
+
+```{r setup, include = FALSE}
+library(Matrix)
+library(Seurat)
+library(ggplot2)
+library(reshape2)
+library(sctransform)
+library(knitr)
+library(dplyr)
+library(GGally)
+library(scattermore)
+knit_hooks$set(optipng = hook_optipng)
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  digits = 2,
+  tidy = TRUE,
+  tidy.opts = list(width.cutoff=80),
+  optipng = '-o 5 -strip all -quiet',
+  fig.width=6, fig.height=4, dpi=100, out.width = '70%'
+)
+old_theme <- theme_set(theme_classic(base_size=11))
+# some of the vst steps can use multiple cores
+# We use the Future API for parallel processing; set parameters here
+future::plan(strategy = 'multicore', workers = 1)
+options(future.globals.maxSize = 8 * 1024 ^ 3)
+options(future.fork.enable = FALSE)
+
+
+residualVarPlot <- function(vst.out, ntop = 30, annotate = F) {
+  gene_var <- as.data.frame(vst.out$gene_attr)
+  gene_var$gene <- rownames(gene_var)
+  topn <- subset(gene_var, rank(-gene_var[, "residual_variance"]) <= ntop)$gene
+
+  p <- ggplot(gene_var, aes(gmean, residual_variance)) +
+    # geom_point(size = 0.6, shape = 16, alpha = 0.5) +
+    # geom_point(data = subset(gene_var, gene %in% topn), size = 0.6, shape = 16, alpha = 1.0, color = "deeppink") +
+    geom_scattermore(pointsize = 1.1, shape = 16, alpha = 0.5, color = "#43a2ca") +
+    geom_scattermore(data = subset(gene_var, gene %in% topn), pointsize = 1.1, shape = 16, alpha = 1.0, color = "deeppink") +
+    geom_hline(yintercept = 1, color = "#4daf4a", size = 0.9, linetype = "dashed") +
+    geom_smooth(method = "loess", span = 0.1, size = 0.9, formula = "y ~ x", color = "#e41a1c") +
+    # geom_smooth(method = "gam", size = 1) +
+    scale_y_continuous(trans = "sqrt", breaks = c(0, 1, 50, 100, 150), limits = c(0, 120)) +
+    scale_x_continuous(trans = "log10", breaks = c(0.001, 0.01, 0.1, 1, 10), labels = MASS::rational) +
+    # scale_y_continuous(trans='log1p') +
+    # facet_wrap(~ model, ncol=3, scales = 'free_y') +
+    xlab("Gene mean") +
+    ylab("Residual variance")
+  if (annotate) {
+    p <- p + geom_text_repel(
+      data = subset(gene_var, gene %in% topn), aes(label = gene), color = "gray25",
+      size = 1.8,
+      nudge_y = 230 - subset(gene_var, gene %in% topn)[, col],
+      direction = "x",
+      angle = 90,
+      vjust = 0.5,
+      hjust = 0.5,
+      segment.size = 0.2,
+      segment.alpha = 0.2
+    )
+  }
+
+  return(p)
+}
+
+```
+
+
+```{r}
+obj <- readRDS("~/data/2020_Hagemann-Jensen_Sandberg_NBT_Smartseq3/seurat_rds/HCA.UMIcounts.PBMC.rds")
+cm <- GetAssayData(obj, assay="RNA", slot="counts")
+```
+
+
+```{r}
+vst_out <- list()
+vst_out[["glmGamPoi"]] <- vst(umi = cm, n_genes = 2000, method = "glmGamPoi")
+vst_out[["glmGamPoi-intercept"]] <- vst(umi = cm, n_genes = 2000,
+                                        method = "glmGamPoi", exclude_poisson = TRUE,
+                                        fix_intercept = TRUE)
+vst_out[["glmGamPoi-slope"]] <- vst(umi = cm, n_genes = 2000,
+                                        method = "glmGamPoi", exclude_poisson = TRUE,
+                                        fix_slope = TRUE)
+```
+```{r}
+plot_model_pars(vst_out[["glmGamPoi"]], show_theta=TRUE)
+residualVarPlot(vst_out[["glmGamPoi"]])
+```
+
+
+```{r}
+plot_model_pars(vst_out[["glmGamPoi-intercept"]], show_theta=TRUE)
+residualVarPlot(vst_out[["glmGamPoi-intercept"]])
+```
+
+
+```{r}
+plot_model_pars(vst_out[["glmGamPoi-slope"]], show_theta=TRUE)
+residualVarPlot(vst_out[["glmGamPoi-slope"]])
+```
+
