@@ -73,37 +73,110 @@ residualVarPlot <- function(vst.out, ntop = 30, annotate = F) {
 
 ```
 
+# Read Data
+
+We will be using a PBMC dataset profile using [Smart-seq3](https://www.nature.com/articles/s41587-020-0497-0).
 
 ```{r}
 obj <- readRDS("~/data/2020_Hagemann-Jensen_Sandberg_NBT_Smartseq3/seurat_rds/HCA.UMIcounts.PBMC.rds")
 cm <- GetAssayData(obj, assay="RNA", slot="counts")
 ```
 
+# Run SCTransform
+
+We run SCTransform using multiple methods:
+
+1) glmGamPoi 
+2) offset with $\theta=10$
+3) glmGamPoi with slope fixed (log(10))
+4) glmGamPoi with intercept fixed as in the offset model
+5) With both fixed slope and fixed intercept 
 
 ```{r}
 vst_out <- list()
-vst_out[["glmGamPoi"]] <- vst(umi = cm, n_genes = 2000, method = "glmGamPoi")
+vst_out[["glmGamPoi-offset"]] <- vst(umi = cm, n_genes = 2000,
+                                     method = "glmGamPoi_offset", exclude_poisson = FALSE,
+                                     verbosity = 0)
+vst_out[["glmGamPoi"]] <- vst(umi = cm, n_genes = 2000, method = "glmGamPoi", verbosity = 0)
 vst_out[["glmGamPoi-intercept"]] <- vst(umi = cm, n_genes = 2000,
-                                        method = "glmGamPoi", exclude_poisson = TRUE,
-                                        fix_intercept = TRUE)
+                                        method = "glmGamPoi", exclude_poisson = FALSE,
+                                        fix_intercept = TRUE, verbosity = 0)
 vst_out[["glmGamPoi-slope"]] <- vst(umi = cm, n_genes = 2000,
-                                        method = "glmGamPoi", exclude_poisson = TRUE,
-                                        fix_slope = TRUE)
+                                    method = "glmGamPoi", exclude_poisson = FALSE,
+                                    fix_slope = TRUE, verbosity = 0)
 ```
-```{r}
+
+# Plot models
+
+```{r, fig.width=12, fig.height=4}
+plot_model_pars(vst_out[["glmGamPoi-offset"]], show_theta=TRUE)
+residualVarPlot(vst_out[["glmGamPoi-offset"]])
+```
+
+```{r, fig.width=12, fig.height=4}
 plot_model_pars(vst_out[["glmGamPoi"]], show_theta=TRUE)
 residualVarPlot(vst_out[["glmGamPoi"]])
 ```
 
 
-```{r}
+```{r, fig.width=12, fig.height=4}
 plot_model_pars(vst_out[["glmGamPoi-intercept"]], show_theta=TRUE)
 residualVarPlot(vst_out[["glmGamPoi-intercept"]])
 ```
 
 
-```{r}
+```{r, fig.width=12, fig.height=4}
 plot_model_pars(vst_out[["glmGamPoi-slope"]], show_theta=TRUE)
 residualVarPlot(vst_out[["glmGamPoi-slope"]])
+```
+
+
+Show how the residual variances compare between methods (plot below shows log10-transformed values)
+
+```{r, fig.width=14, fig.height=14, out.width='95%'}
+resvar <- sapply(vst_out, function(x) x$gene_attr$residual_variance)
+colnames(resvar) <- names(vst_out)
+ggpairs(data.frame(log10(resvar)), progress = FALSE)
+```
+
+Show how the residual means compare between methods
+
+```{r, fig.width=14, fig.height=14, out.width='95%'}
+resmean <- sapply(vst_out, function(x) x$gene_attr$residual_mean)
+colnames(resmean) <- names(vst_out)
+ggpairs(data.frame(resmean), progress = FALSE)
+```
+
+
+
+Show the model parameters for all methods
+
+```{r, fig.width=12, fig.height=6, out.width='95%'}
+plot_lst <- lapply(names(vst_out), function(method_name) {
+  plot_model_pars(vst_out[[method_name]], show_theta = TRUE) + ggtitle(method_name)
+})
+plot(cowplot::plot_grid(plotlist = plot_lst, ncol = 2))
+```
+
+
+# Runtime comparison
+
+```{r}
+times <- lapply(names(vst_out), function(method_name) {
+  times <- vst_out[[method_name]]$times
+  delta_t_total <- as.numeric(times$done) - as.numeric(times$start_time)
+  delta_t_model <- as.numeric(times$reg_model_pars) - as.numeric(times$get_model_pars)
+  delta_t_rest <- delta_t_total - delta_t_model
+  data.frame(method_name, delta_t_total, delta_t_model, delta_t_rest)
+})
+df <- do.call(rbind, times)
+df$method_name <- factor(df$method_name, levels = df$method_name, ordered = TRUE)
+df <- arrange(df, delta_t_total) %>% mutate(method_name = factor(method_name, unique(method_name)))
+melt(df, id.vars = 'method_name', measure.vars = c('delta_t_model', 'delta_t_rest')) %>%
+  ggplot(aes(method_name, value, fill = variable)) +
+  geom_bar(position = 'stack', stat = 'identity') +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  xlab('Method') + ylab('Wall clock time in seconds') +
+  scale_fill_discrete(name = 'Part of algorithm', labels = c('Model fitting', 'Rest'))
 ```
 

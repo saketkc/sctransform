@@ -524,7 +524,9 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
           }
           return(fit_glmGamPoi(umi = umi_bin_worker, model_str = model_str, data = data_step1, inf_theta = exclude_poisson))
         }
-
+        if (method == "glmGamPoi_offset") {
+          return(fit_glmGamPoi_offset(umi = umi_bin_worker, model_str = model_str, data = data_step1, inf_theta = exclude_poisson))
+        }
       }
     )
     model_pars[[i]] <- do.call(rbind, par_lst)
@@ -606,7 +608,7 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
                            theta_regularization, exclude_poisson = FALSE, 
                            fix_intercept = FALSE, fix_slope = FALSE, verbosity = 0) {
   genes <- names(genes_log_gmean)
-  if (exclude_poisson){
+  if (exclude_poisson | fix_slope | fix_intercept){
       # exclude this from the fitting procedure entirely
       # at the regularization step
       # then before returning, just 
@@ -652,7 +654,8 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
                              n_cells = NULL,
                              method = "offset", 
                              return_gene_attr = FALSE, 
-                             theta_given = Inf)$model_pars
+                             theta_given = Inf, 
+                             verbosity = 0)$model_pars
       dispersion_par <- rep(0, dim(vst_out_poisson)[1])
       vst_out_poisson <- cbind(vst_out_poisson, dispersion_par)
     }
