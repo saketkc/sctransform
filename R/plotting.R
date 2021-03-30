@@ -20,7 +20,7 @@
 #' plot_model_pars(vst_out)
 #' }
 #'
-plot_model_pars <- function(vst_out, show_theta = FALSE, show_var = FALSE,
+plot_model_pars <- function(vst_out, xaxis="gmean", show_theta = FALSE, show_var = FALSE,
                             verbosity = 2, verbose = NULL, show_progress = NULL) {
   # Take care of deprecated arguments
   if (!is.null(verbose)) {
@@ -67,7 +67,7 @@ plot_model_pars <- function(vst_out, show_theta = FALSE, show_var = FALSE,
   df_fit$type <- 'regularized'
   df_fit$is_outl <- FALSE
   
-  if (startsWith(x = vst_out$arguments$method, prefix = 'offset')) {
+  if (startsWith(x = vst_out$arguments$method, prefix = 'offset') | (xaxis=="amean")) {
     df$x <- vst_out$gene_attr[df$gene, 'amean']
     df_fit$x <- vst_out$gene_attr[df_fit$gene, 'amean']
     xlab <- 'Arithmetic mean of gene [log10]'

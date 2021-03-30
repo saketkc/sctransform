@@ -120,8 +120,8 @@ vst <- function(umi,
                 theta_estimation_fun = 'theta.ml',
                 theta_given = NULL,
                 exclude_poisson = FALSE,
-                fix_slope = FALSE,
                 fix_intercept = FALSE,
+                fix_slope = FALSE,
                 verbosity = 2,
                 verbose = NULL,
                 show_progress = NULL) {
@@ -253,8 +253,7 @@ vst <- function(umi,
   times$get_model_pars = Sys.time()
   model_pars <- get_model_pars(genes_step1, bin_size, umi, model_str, cells_step1,
                                method, data_step1, theta_given, theta_estimation_fun,
-                               exclude_poisson, 
-                               fix_intercept, fix_slope, verbosity)
+                               exclude_poisson, fix_intercept, fix_slope, verbosity)
   # make sure theta is not too small
   min_theta <- 1e-7
   if (any(model_pars[, 'theta'] < min_theta)) {
@@ -270,7 +269,7 @@ vst <- function(umi,
   if (do_regularize) {
     model_pars_fit <- reg_model_pars(model_pars, genes_log_gmean_step1, genes_log_gmean, cell_attr,
                                      batch_var, cells_step1, genes_step1, umi, bw_adjust, gmean_eps,
-                                     theta_regularization, exclude_poisson, fix_slope, fix_intercept, verbosity)
+                                     theta_regularization, exclude_poisson, fix_intercept, fix_slope, verbosity)
     model_pars_outliers <- attr(model_pars_fit, 'outliers')
   } else {
     model_pars_fit <- model_pars
@@ -380,15 +379,16 @@ vst <- function(umi,
     gene_attr <- data.frame(
       detection_rate = genes_cell_count[genes] / ncol(umi),
       gmean = 10 ^ genes_log_gmean,
+      amean = rowMeans(umi),
       variance = row_var(umi))
     if (ncol(rv$y) > 0) {
       gene_attr$residual_mean = rowMeans(rv$y)
       gene_attr$residual_variance = row_var(rv$y)
     }
-    # Special case offset model - also calculate arithmetic mean
-    if (startsWith(x = method, prefix = 'offset')) {
-      gene_attr$amean <- rowMeans(umi)
-    }
+    ## Special case offset model - also calculate arithmetic mean
+    ##if (startsWith(x = method, prefix = 'offset')) {
+    ##  gene_attr$amean <- rowMeans(umi)
+    ##}
     
     rv[['gene_attr']] <- gene_attr
   }
@@ -404,8 +404,7 @@ vst <- function(umi,
 
 get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
                            method, data_step1, theta_given, theta_estimation_fun,
-                           exclude_poisson = FALSE, 
-                           fix_intercept = FALSE, fix_slope = FALSE, verbosity = 0) {
+                           exclude_poisson = FALSE, fix_intercept = FALSE, fix_slope = FALSE, verbosity = 0) {
   if (fix_slope | fix_intercept) {
     gene_mean <- rowMeans(umi)
     mean_cell_sum <- mean(colSums(umi))
@@ -647,17 +646,18 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
         message(paste("Calling offset model for all", length(all_poisson_genes), "poisson genes"))
       }
   
-      
-      vst_out_poisson <- vst(umi = umi,
+      # Call offset model with theta=inf 
+      # only the slope and intercept are used downstream
+      vst_out_offset <- vst(umi = umi,
                              cell_attr = cell_attr,
                              n_genes = NULL, 
                              n_cells = NULL,
                              method = "offset", 
                              return_gene_attr = FALSE, 
                              theta_given = Inf, 
-                             verbosity = 0)$model_pars
-      dispersion_par <- rep(0, dim(vst_out_poisson)[1])
-      vst_out_poisson <- cbind(vst_out_poisson, dispersion_par)
+                             verbosity = 0)$model_pars_fit
+      dispersion_par <- rep(0, dim(vst_out_offset)[1])
+      vst_out_offset <- cbind(vst_out_offset, dispersion_par)
     }
 
 
@@ -778,27 +778,29 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
       message(paste('Replacing fit params for', length(all_poisson_genes),  'poisson genes by theta=Inf'))
     }
     for (col in colnames(model_pars_fit)){
-      stopifnot(col %in% colnames(vst_out_poisson))
-      model_pars_fit[all_poisson_genes, col] <- vst_out_poisson[all_poisson_genes, col] 
+      stopifnot(col %in% colnames(vst_out_offset))
+      model_pars_fit[all_poisson_genes, col] <- vst_out_offset[all_poisson_genes, col] 
     }
   }
 
   if (fix_intercept){
+    # Replace the fitted intercepts by those calculated from offset model
     col <- "(Intercept)"
     if (verbosity > 0) {
       message(paste0('Replacing regularized parameter ', col, ' by offset'))
     }
-    stopifnot(col %in% colnames(vst_out_poisson))
-    model_pars_fit[all_genes, col] <- vst_out_poisson[all_genes, col] 
+    stopifnot(col %in% colnames(vst_out_offset))
+    model_pars_fit[all_genes, col] <- vst_out_offset[all_genes, col] 
   }
   
   if (fix_slope){
+    # Replace the fitted slope by those calculated from offset model
     col <- "log_umi"
     if (verbosity > 0) {
       message(paste0('Replacing regularized parameter ', col, ' by offset'))
     }
-    stopifnot(col %in% colnames(vst_out_poisson))
-    model_pars_fit[all_genes, col] <- vst_out_poisson[all_genes, col] 
+    stopifnot(col %in% colnames(vst_out_offset))
+    model_pars_fit[all_genes, col] <- vst_out_offset[all_genes, col] 
   }
 
   attr(model_pars_fit, 'outliers') <- outliers

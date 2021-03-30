@@ -1,5 +1,5 @@
 ---
-title: "Fixed Slope"
+title: "Comparison of alternate models for SCTransform"
 author: "Saket Choudhary"
 date: "`r Sys.Date()`"
 output: 
@@ -17,15 +17,14 @@ library(knitr)
 library(dplyr)
 library(GGally)
 library(scattermore)
-knit_hooks$set(optipng = hook_optipng)
 knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>",
   digits = 2,
   tidy = TRUE,
   tidy.opts = list(width.cutoff=80),
-  optipng = '-o 5 -strip all -quiet',
-  fig.width=6, fig.height=4, dpi=100, out.width = '70%'
+  #optipng = '-o 5 -strip all -quiet',
+  fig.width=6, fig.height=4, dpi=300, out.width = '70%'
 )
 old_theme <- theme_set(theme_classic(base_size=11))
 # some of the vst steps can use multiple cores
@@ -35,22 +34,18 @@ options(future.globals.maxSize = 8 * 1024 ^ 3)
 options(future.fork.enable = FALSE)
 
 
-residualVarPlot <- function(vst.out, ntop = 30, annotate = F) {
+residualVarPlot <- function(vst.out, xaxis="gmean", ntop = 30, annotate = F) {
   gene_var <- as.data.frame(vst.out$gene_attr)
   gene_var$gene <- rownames(gene_var)
   topn <- subset(gene_var, rank(-gene_var[, "residual_variance"]) <= ntop)$gene
 
-  p <- ggplot(gene_var, aes(gmean, residual_variance)) +
-    # geom_point(size = 0.6, shape = 16, alpha = 0.5) +
-    # geom_point(data = subset(gene_var, gene %in% topn), size = 0.6, shape = 16, alpha = 1.0, color = "deeppink") +
+  p <- ggplot(gene_var, aes_string(xaxis, "residual_variance")) +
     geom_scattermore(pointsize = 1.1, shape = 16, alpha = 0.5, color = "#43a2ca") +
     geom_scattermore(data = subset(gene_var, gene %in% topn), pointsize = 1.1, shape = 16, alpha = 1.0, color = "deeppink") +
     geom_hline(yintercept = 1, color = "#4daf4a", size = 0.9, linetype = "dashed") +
     geom_smooth(method = "loess", span = 0.1, size = 0.9, formula = "y ~ x", color = "#e41a1c") +
-    # geom_smooth(method = "gam", size = 1) +
     scale_y_continuous(trans = "sqrt", breaks = c(0, 1, 50, 100, 150), limits = c(0, 120)) +
-    scale_x_continuous(trans = "log10", breaks = c(0.001, 0.01, 0.1, 1, 10), labels = MASS::rational) +
-    # scale_y_continuous(trans='log1p') +
+    scale_x_continuous(trans = "log10", breaks = c(0.001, 0.01, 0.1, 1, 10, 100), labels = MASS::rational) +
     # facet_wrap(~ model, ncol=3, scales = 'free_y') +
     xlab("Gene mean") +
     ylab("Residual variance")
@@ -71,7 +66,12 @@ residualVarPlot <- function(vst.out, ntop = 30, annotate = F) {
   return(p)
 }
 
+
 ```
+
+This vignette provides a comparison of various strategies for running SCTransform by either
+using total UMI as an offset or by fixing the slope or intercept to their analytically derived
+estimates as in the offset model.
 
 # Read Data
 
@@ -86,82 +86,126 @@ cm <- GetAssayData(obj, assay="RNA", slot="counts")
 
 We run SCTransform using multiple methods:
 
-1) glmGamPoi 
-2) offset with $\theta=10$
-3) glmGamPoi with slope fixed (log(10))
-4) glmGamPoi with intercept fixed as in the offset model
-5) With both fixed slope and fixed intercept 
+1) glmGamPoi: SCTransform with glmGamPoi
+2) offset10: Offset model with with $\theta=10$
+3) glmGamPoi-offset: SCTransform with log_umi as an offset using glmGamPoi
+3) glmGamPoi-slope: SCTransform with `method="glmGamPoi"` and `fix_slope=TRUE`, that will
+use the offset model estimates for Step 1 (except $\theta$) and at Step 2 will regularize (wrt gmean) intercept but the slope is fixed at offset estimate
+4) glmGamPoi-intercept: SCTransform with `method="glmGamPoi"` and `fix_intercept=TRUE`, that will
+use the offset model estimates for Step 1 (except $\theta$) and at Step 2 will regularize (wrt gmean) slope but the intercept is fixed at offset estimate
+5) glmGamPoi-interceptslope: SCTransform with `method="glmGamPoi"` and `fix_intercept=TRUE`, that will
+use the offset model estimates for Step 1 (except $\theta$) and at Step 2 will replace both slope and intercept
+by offset model estimates. This is same as `glmGamPoi-intercept`, since the slope is anyway fixed and has
+no effect of regularization.
 
 ```{r}
 vst_out <- list()
+
+vst_out[["glmGamPoi"]] <- vst(umi = cm, n_genes = 2000, method = "glmGamPoi", verbosity = 0)
 vst_out[["glmGamPoi-offset"]] <- vst(umi = cm, n_genes = 2000,
                                      method = "glmGamPoi_offset", exclude_poisson = FALSE,
                                      verbosity = 0)
-vst_out[["glmGamPoi"]] <- vst(umi = cm, n_genes = 2000, method = "glmGamPoi", verbosity = 0)
+vst_out[["offset10"]] <- vst(umi = cm, n_genes = 2000,
+                             method = "offset", theta_given = 10, exclude_poisson = FALSE,
+                             verbosity = 0)
 vst_out[["glmGamPoi-intercept"]] <- vst(umi = cm, n_genes = 2000,
                                         method = "glmGamPoi", exclude_poisson = FALSE,
                                         fix_intercept = TRUE, verbosity = 0)
 vst_out[["glmGamPoi-slope"]] <- vst(umi = cm, n_genes = 2000,
                                     method = "glmGamPoi", exclude_poisson = FALSE,
                                     fix_slope = TRUE, verbosity = 0)
+
+vst_out[["glmGamPoi-interceptslope"]] <- vst(umi = cm, n_genes = 2000,
+                                    method = "glmGamPoi", exclude_poisson = FALSE,
+                                    fix_slope = TRUE, fix_intercept = TRUE, verbosity = 0)
+
+
 ```
+
+
 
 # Plot models
 
-```{r, fig.width=12, fig.height=4}
-plot_model_pars(vst_out[["glmGamPoi-offset"]], show_theta=TRUE)
-residualVarPlot(vst_out[["glmGamPoi-offset"]])
+
+Model parameter for all methods with respect to gmean:
+
+```{r, fig.width=12, fig.height=9, out.width='95%', warning=FALSE}
+plot_lst <- lapply(names(vst_out), function(method_name) {
+  plot_model_pars(vst_out[[method_name]], show_theta = TRUE) + ggtitle(gsub("glmGamPoi-", "fixed-", method_name))
+})
+plot(cowplot::plot_grid(plotlist = plot_lst, ncol = 2))
 ```
 
-```{r, fig.width=12, fig.height=4}
-plot_model_pars(vst_out[["glmGamPoi"]], show_theta=TRUE)
-residualVarPlot(vst_out[["glmGamPoi"]])
-```
+Residual variances for all methods with respect to gmean:
 
-
-```{r, fig.width=12, fig.height=4}
-plot_model_pars(vst_out[["glmGamPoi-intercept"]], show_theta=TRUE)
-residualVarPlot(vst_out[["glmGamPoi-intercept"]])
-```
-
-
-```{r, fig.width=12, fig.height=4}
-plot_model_pars(vst_out[["glmGamPoi-slope"]], show_theta=TRUE)
-residualVarPlot(vst_out[["glmGamPoi-slope"]])
+```{r, fig.width=12, fig.height=9, out.width='95%', warning=FALSE}
+plot_lst <- lapply(names(vst_out), function(method_name) {
+  residualVarPlot(vst_out[[method_name]]) + ggtitle(gsub("glmGamPoi-", "fixed-", method_name))
+})
+plot(cowplot::plot_grid(plotlist = plot_lst, ncol = 2))
 ```
 
 
-Show how the residual variances compare between methods (plot below shows log10-transformed values)
+Model parameter for all methods with respect to amean:
 
-```{r, fig.width=14, fig.height=14, out.width='95%'}
+```{r, fig.width=12, fig.height=9, out.width='95%', warning=FALSE}
+plot_lst <- lapply(names(vst_out), function(method_name) {
+  plot_model_pars(vst_out[[method_name]], show_theta = TRUE, xaxis = "amean") + ggtitle(gsub("glmGamPoi-", "fixed-", method_name))
+})
+plot(cowplot::plot_grid(plotlist = plot_lst, ncol = 2))
+```
+
+Residual variances for all methods with respect to amean:
+
+```{r, fig.width=12, fig.height=9, out.width='95%', warning=FALSE}
+plot_lst <- lapply(names(vst_out), function(method_name) {
+  residualVarPlot(vst_out[[method_name]], xaxis = "amean") + ggtitle(gsub("glmGamPoi-", "fixed-", method_name))
+})
+plot(cowplot::plot_grid(plotlist = plot_lst, ncol = 2))
+```
+
+
+
+# Compare parameters
+
+Comparison of intercept across methods:
+
+```{r, fig.width=10, fig.height=10, out.width='95%', warning=FALSE}
+intercepts <- sapply(vst_out, function(x) x$model_pars_fit[, "(Intercept)"])
+colnames(intercepts) <- names(vst_out)
+ggpairs(data.frame(intercepts), progress = FALSE)
+```
+ 
+
+Comparison of slopes across methods:
+
+```{r, fig.width=10, fig.height=10, out.width='95%', warning=FALSE}
+slopes <- sapply(vst_out, function(x) x$model_pars_fit[, "log_umi"])
+colnames(slopes) <- names(vst_out)
+ggpairs(data.frame(slopes), progress = FALSE)
+```
+
+
+Comparison of residual variances (log10) across methods:
+
+```{r, fig.width=10, fig.height=10, out.width='95%', warning=FALSE}
 resvar <- sapply(vst_out, function(x) x$gene_attr$residual_variance)
 colnames(resvar) <- names(vst_out)
 ggpairs(data.frame(log10(resvar)), progress = FALSE)
 ```
 
-Show how the residual means compare between methods
+Comparison of residual means across methods:
 
-```{r, fig.width=14, fig.height=14, out.width='95%'}
+```{r, fig.width=10, fig.height=10, out.width='95%', warning=FALSE}
 resmean <- sapply(vst_out, function(x) x$gene_attr$residual_mean)
 colnames(resmean) <- names(vst_out)
 ggpairs(data.frame(resmean), progress = FALSE)
 ```
 
 
-
-Show the model parameters for all methods
-
-```{r, fig.width=12, fig.height=6, out.width='95%'}
-plot_lst <- lapply(names(vst_out), function(method_name) {
-  plot_model_pars(vst_out[[method_name]], show_theta = TRUE) + ggtitle(method_name)
-})
-plot(cowplot::plot_grid(plotlist = plot_lst, ncol = 2))
-```
-
-
 # Runtime comparison
 
-```{r}
+```{r, fig.width=8, fig.height=5, out.width='95%', warning=FALSE}
 times <- lapply(names(vst_out), function(method_name) {
   times <- vst_out[[method_name]]$times
   delta_t_total <- as.numeric(times$done) - as.numeric(times$start_time)
