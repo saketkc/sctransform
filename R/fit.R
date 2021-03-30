@@ -100,5 +100,7 @@ fit_overdisp_mle <- function(umi, mu, intercept, slope){
                                        verbose = FALSE)
 
   theta <- 1 / fit$estimate
-  return (cbind(theta, intercept, slope))
+  model_pars <- cbind(theta, intercept, slope)
+  colnames(model_pars) <- c("theta", "(Intercept)", "log_umi")
+  return (model_pars)
 }

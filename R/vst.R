@@ -150,18 +150,6 @@ vst <- function(umi,
     }
   }
 
-  if (fix_slope | fix_intercept){
-     gene_mean <- rowMeans(umi)
-     mean_cell_sum <- mean(colSums(umi))
-     model_pars <- cbind(rep(NA, length(genes_step1)),
-                         log(gene_mean) - log(mean_cell_sum),
-                         rep(log(10), length(genes_step1)))
-    dimnames(model_pars) <- list(genes_step1, c('theta', '(Intercept)', 'log_umi'))
-    y <- as.matrix(umi[genes_step1, cells_step1])
-    regressor_data <- model.matrix(as.formula(gsub('^y', '', model_str)), 
-    data_step1[cells_step1, ])
-    mu <- exp(tcrossprod(model_pars[genes_step1, -1, drop=FALSE], regressor_data))
-  }
   
   # Special case offset model - override most parameters
   if (startsWith(x = method, prefix = 'offset')) {
@@ -418,6 +406,17 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
                            method, data_step1, theta_given, theta_estimation_fun,
                            exclude_poisson = FALSE, 
                            fix_intercept = FALSE, fix_slope = FALSE, verbosity = 0) {
+  if (fix_slope | fix_intercept) {
+    gene_mean <- rowMeans(umi)
+    mean_cell_sum <- mean(colSums(umi))
+    model_pars_fixed <- cbind(rep(NA, length(genes_step1)),
+                        log(gene_mean)[genes_step1] - log(mean_cell_sum),
+                        rep(log(10), length(genes_step1)))
+    dimnames(model_pars_fixed) <- list(genes_step1, c('theta', '(Intercept)', 'log_umi'))
+    regressor_data <- model.matrix(as.formula(gsub('^y', '', model_str)), data_step1[cells_step1, ])
+    y_fixed <- as.matrix(umi[genes_step1, cells_step1])
+    mu_fixed <- exp(tcrossprod(model_pars_fixed[genes_step1, -1, drop=FALSE], regressor_data))
+  }
   # Special case offset model with one theta for all genes
   if (startsWith(x = method, prefix = 'offset')) {
     gene_mean <- rowMeans(umi)
@@ -471,7 +470,10 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
     genes_bin_regress <- genes_step1[bin_ind == i]
     umi_bin <- as.matrix(umi[genes_bin_regress, cells_step1, drop=FALSE])
     if (fix_slope | fix_intercept) {
-      mu_bin <-  as.matrix(mu[genes_bin_regress, cells_step1, drop=FALSE])
+      mu_bin <-  as.matrix(mu_fixed[genes_bin_regress, cells_step1, drop=FALSE])
+      model_pars_bin <-  model_pars_fixed[genes_bin_regress, ]
+      intercept_bin <- model_pars_bin[, "(Intercept)"]
+      slope_bin <- model_pars_bin[, "log_umi"]
     }
     if (!is.null(theta_given)) {
       theta_given_bin <- theta_given[genes_bin_regress]
@@ -493,6 +495,12 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
       X = index_lst,
       FUN = function(indices) {
         umi_bin_worker <- umi_bin[indices, , drop = FALSE]
+        if (fix_intercept | fix_slope){
+          mu_bin_worker <- mu_bin[indices, , drop = FALSE] 
+          model_pars_bin_worker <- model_pars_bin[indices, , drop = FALSE] 
+          intercept_bin_worker <- model_pars_bin_worker[, "(Intercept)"]
+          slope_bin_worker <- model_pars_bin_worker[, "log_umi"]
+        }
         if (method == 'poisson') {
           return(fit_poisson(umi = umi_bin_worker, model_str = model_str, data = data_step1, theta_estimation_fun = theta_estimation_fun))
         }
@@ -761,6 +769,7 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
   )
   model_pars_fit <- model_pars_fit[, colnames(model_pars_fit) != 'dispersion_par']
   model_pars_fit <- cbind(theta, model_pars_fit)
+  all_genes <- rownames(model_pars_fit)
   if (exclude_poisson){
     if (verbosity > 0) {
       message(paste('Replacing fit params for', length(all_poisson_genes),  'poisson genes by theta=Inf'))
@@ -769,6 +778,24 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
       stopifnot(col %in% colnames(vst_out_poisson))
       model_pars_fit[all_poisson_genes, col] <- vst_out_poisson[all_poisson_genes, col] 
     }
+  }
+
+  if (fix_intercept){
+    col <- "(Intercept)"
+    if (verbosity > 0) {
+      message(paste0('Replacing regularized parameter ', col, ' by offset'))
+    }
+    stopifnot(col %in% colnames(vst_out_poisson))
+    model_pars_fit[all_genes, col] <- vst_out_poisson[all_genes, col] 
+  }
+  
+  if (fix_slope){
+    col <- "log_umi"
+    if (verbosity > 0) {
+      message(paste0('Replacing regularized parameter ', col, ' by offset'))
+    }
+    stopifnot(col %in% colnames(vst_out_poisson))
+    model_pars_fit[all_genes, col] <- vst_out_poisson[all_genes, col] 
   }
 
   attr(model_pars_fit, 'outliers') <- outliers
