@@ -1,6 +1,6 @@
 ---
 title: "Comparison of alternate models for SCTransform"
-author: "Saket Choudhary"
+author: ""
 date: "`r Sys.Date()`"
 output: 
   html_document:
@@ -34,17 +34,17 @@ options(future.globals.maxSize = 8 * 1024 ^ 3)
 options(future.fork.enable = FALSE)
 
 
-residualVarPlot <- function(vst.out, xaxis="gmean", ntop = 30, annotate = F) {
+residualVarPlot <- function(vst.out, xaxis="gmean", max_resvar=30, ntop = 30, annotate = F) {
   gene_var <- as.data.frame(vst.out$gene_attr)
   gene_var$gene <- rownames(gene_var)
   topn <- subset(gene_var, rank(-gene_var[, "residual_variance"]) <= ntop)$gene
-
+  gene_var[gene_var$residual_variance>max_resvar, "residual_variance"] <- max_resvar
   p <- ggplot(gene_var, aes_string(xaxis, "residual_variance")) +
     geom_scattermore(pointsize = 1.1, shape = 16, alpha = 0.5, color = "#43a2ca") +
     geom_scattermore(data = subset(gene_var, gene %in% topn), pointsize = 1.1, shape = 16, alpha = 1.0, color = "deeppink") +
     geom_hline(yintercept = 1, color = "#4daf4a", size = 0.9, linetype = "dashed") +
     geom_smooth(method = "loess", span = 0.1, size = 0.9, formula = "y ~ x", color = "#e41a1c") +
-    scale_y_continuous(trans = "sqrt", breaks = c(0, 1, 50, 100, 150), limits = c(0, 120)) +
+    scale_y_continuous(trans = "sqrt", breaks = c(0, 1, 10, 25, 50, 100, 150), limits = c(0, max_resvar+1)) +
     scale_x_continuous(trans = "log10", breaks = c(0.001, 0.01, 0.1, 1, 10, 100), labels = MASS::rational) +
     # facet_wrap(~ model, ncol=3, scales = 'free_y') +
     xlab("Gene mean") +
@@ -87,13 +87,13 @@ cm <- GetAssayData(obj, assay="RNA", slot="counts")
 We run SCTransform using multiple methods:
 
 1) glmGamPoi: SCTransform with glmGamPoi
-2) offset10: Offset model with with $\theta=10$
-3) glmGamPoi-offset: SCTransform with log_umi as an offset using glmGamPoi
-3) glmGamPoi-slope: SCTransform with `method="glmGamPoi"` and `fix_slope=TRUE`, that will
+2) offset-vartheta: SCTransform with log_umi as an offset using glmGamPoi
+3) offset10: Offset model with with $\theta=10$
+3) fixed-slope: SCTransform with `method="glmGamPoi"` and `fix_slope=TRUE`, that will
 use the offset model estimates for Step 1 (except $\theta$) and at Step 2 will regularize (wrt gmean) intercept but the slope is fixed at offset estimate
-4) glmGamPoi-intercept: SCTransform with `method="glmGamPoi"` and `fix_intercept=TRUE`, that will
+4) fixed-intercept: SCTransform with `method="glmGamPoi"` and `fix_intercept=TRUE`, that will
 use the offset model estimates for Step 1 (except $\theta$) and at Step 2 will regularize (wrt gmean) slope but the intercept is fixed at offset estimate
-5) glmGamPoi-interceptslope: SCTransform with `method="glmGamPoi"` and `fix_intercept=TRUE`, that will
+5) fixed-interceptandslope: SCTransform with `method="glmGamPoi"` and `fix_intercept=TRUE`, that will
 use the offset model estimates for Step 1 (except $\theta$) and at Step 2 will replace both slope and intercept
 by offset model estimates. This is same as `glmGamPoi-intercept`, since the slope is anyway fixed and has
 no effect of regularization.
@@ -102,24 +102,16 @@ no effect of regularization.
 vst_out <- list()
 
 vst_out[["glmGamPoi"]] <- vst(umi = cm, n_genes = 2000, method = "glmGamPoi", verbosity = 0)
-vst_out[["glmGamPoi-offset"]] <- vst(umi = cm, n_genes = 2000,
-                                     method = "glmGamPoi_offset", exclude_poisson = FALSE,
-                                     verbosity = 0)
-vst_out[["offset10"]] <- vst(umi = cm, n_genes = 2000,
-                             method = "offset", theta_given = 10, exclude_poisson = FALSE,
-                             verbosity = 0)
-vst_out[["glmGamPoi-intercept"]] <- vst(umi = cm, n_genes = 2000,
-                                        method = "glmGamPoi", exclude_poisson = FALSE,
-                                        fix_intercept = TRUE, verbosity = 0)
-vst_out[["glmGamPoi-slope"]] <- vst(umi = cm, n_genes = 2000,
-                                    method = "glmGamPoi", exclude_poisson = FALSE,
-                                    fix_slope = TRUE, verbosity = 0)
 
-vst_out[["glmGamPoi-interceptslope"]] <- vst(umi = cm, n_genes = 2000,
-                                    method = "glmGamPoi", exclude_poisson = FALSE,
-                                    fix_slope = TRUE, fix_intercept = TRUE, verbosity = 0)
+vst_out[["offset-vartheta"]] <- vst(umi = cm, n_genes = 2000, method = "glmGamPoi_offset", exclude_poisson = FALSE, verbosity = 0)
 
+vst_out[["offset10"]] <- vst(umi = cm, n_genes = 2000, method = "offset", theta_given = 10, exclude_poisson = FALSE, verbosity = 0)
 
+vst_out[["fixed-intercept"]] <- vst(umi = cm, n_genes = 2000, method = "glmGamPoi", exclude_poisson = FALSE, fix_intercept = TRUE, verbosity = 0)
+
+vst_out[["fixed-slope"]] <- vst(umi = cm, n_genes = 2000, method = "glmGamPoi", exclude_poisson = FALSE, fix_slope = TRUE, verbosity = 0)
+
+vst_out[["fixed-interceptandslope"]] <- vst(umi = cm, n_genes = 2000, method = "glmGamPoi", exclude_poisson = FALSE, fix_slope = TRUE, fix_intercept = TRUE, verbosity = 0)
 ```
 
 
