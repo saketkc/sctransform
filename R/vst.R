@@ -121,6 +121,7 @@ vst <- function(umi,
                 theta_given = NULL,
                 exclude_poisson = FALSE,
                 use_geometric_mean = TRUE,
+                use_geometric_mean_offset = FALSE,
                 fix_intercept = FALSE,
                 fix_slope = FALSE,
                 verbosity = 2,
@@ -269,7 +270,7 @@ vst <- function(umi,
   model_pars <- get_model_pars(genes_step1, bin_size, umi, model_str, cells_step1,
                                method, data_step1, theta_given, theta_estimation_fun,
                                exclude_poisson, fix_intercept, fix_slope,
-                               use_geometric_mean, verbosity)
+                               use_geometric_mean, use_geometric_mean_offset, verbosity)
   
   # make sure theta is not too small
   min_theta <- 1e-7
@@ -422,13 +423,20 @@ vst <- function(umi,
 get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
                            method, data_step1, theta_given, theta_estimation_fun,
                            exclude_poisson = FALSE, fix_intercept = FALSE, 
-                           fix_slope = FALSE, use_geometric_mean = TRUE, verbosity = 0) {
+                           fix_slope = FALSE, use_geometric_mean = TRUE,
+                           use_geometric_mean_offset = FALSE, verbosity = 0) {
   if (fix_slope | fix_intercept) {
     gene_mean <- rowMeans(umi)
     mean_cell_sum <- mean(colSums(umi))
     model_pars_fixed <- cbind(rep(NA, length(genes_step1)),
                               log(gene_mean)[genes_step1] - log(mean_cell_sum),
                               rep(log(10), length(genes_step1)))
+    if (use_geometric_mean_offset){
+      gene_gmean <- row_gmean(umi)
+      model_pars_fixed <- cbind(rep(NA, length(genes_step1)),
+                                log(gene_gmean)[genes_step1] - log(mean_cell_sum),
+                                rep(log(10), length(genes_step1)))
+    }
     dimnames(model_pars_fixed) <- list(genes_step1, c('theta', '(Intercept)', 'log_umi'))
     regressor_data <- model.matrix(as.formula(gsub('^y', '', model_str)), data_step1[cells_step1, ])
     y_fixed <- as.matrix(umi[genes_step1, cells_step1])
@@ -468,7 +476,31 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
         })
       }
       model_pars[, 'theta'] <- mean(theta)
+    } else if (method == 'offset_allshared_theta_estimate') {
+      # use all genes with detection rate > 0.5 to estimate theta
+
+      use_genes <- rowMeans(umi > 0) > 0.5
+      
+      use_cells <- sample(x = ncol(umi), size = min(ncol(umi), 5000), replace = FALSE)
+      if (verbosity > 0) {
+        message(sprintf('Estimate shared theta for offset model using %d genes, %d cells', 
+                        length(x = use_genes), length(x = use_cells)))
+      }
+      y <- as.matrix(umi[use_genes, use_cells])
+      regressor_data <- model.matrix(as.formula(gsub('^y', '', model_str)), data_step1[use_cells, ])
+      mu <- exp(tcrossprod(model_pars[use_genes, -1, drop=FALSE], regressor_data))
+      if (requireNamespace("glmGamPoi", quietly = TRUE) && getNamespaceVersion('glmGamPoi') >= '1.2') {
+        theta <- 1 / glmGamPoi::overdispersion_mle(y = y, mean = mu)$estimate
+        theta <- theta[is.finite(theta)]
+      } else {
+        theta <- sapply(1:nrow(y), function(i) {
+          as.numeric(MASS::theta.ml(y = y[i, ], mu = mu[i, ], limit = 100))
+        })
+      }
+      model_pars[, 'theta'] <- mean(theta)
     }
+    
+    
     return(model_pars)
   }
   
@@ -536,13 +568,17 @@ get_model_pars <- function(genes_step1, bin_size, umi, model_str, cells_step1,
         }
         if (method == "glmGamPoi") {
           if (fix_slope | fix_intercept){
-            return(fit_overdisp_mle(umi = umi_bin_worker, mu = mu_bin_worker, 
-                                    intercept = intercept_bin_worker, slope = slope_bin_worker))
+            return(fit_overdisp_mle(umi = umi_bin_worker,
+                                    mu = mu_bin_worker, 
+                                    intercept = intercept_bin_worker,
+                                    slope = slope_bin_worker))
           }
-          return(fit_glmGamPoi(umi = umi_bin_worker, model_str = model_str, data = data_step1, inf_theta = exclude_poisson))
+          return(fit_glmGamPoi(umi = umi_bin_worker, model_str = model_str, 
+                               data = data_step1, inf_theta = exclude_poisson))
         }
         if (method == "glmGamPoi_offset") {
-          return(fit_glmGamPoi_offset(umi = umi_bin_worker, model_str = model_str, data = data_step1, inf_theta = exclude_poisson))
+          return(fit_glmGamPoi_offset(umi = umi_bin_worker, model_str = model_str,
+                                      data = data_step1, inf_theta = exclude_poisson))
         }
       }
     )
