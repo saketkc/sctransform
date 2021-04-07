@@ -287,7 +287,7 @@ vst <- function(umi,
   if (do_regularize) {
     model_pars_fit <- reg_model_pars(model_pars, genes_log_gmean_step1, genes_log_gmean, cell_attr,
                                      batch_var, cells_step1, genes_step1, umi, bw_adjust, gmean_eps,
-                                     theta_regularization, exclude_poisson, fix_intercept, fix_slope, verbosity)
+                                     theta_regularization, exclude_poisson, fix_intercept, fix_slope, use_geometric_mean_offset, verbosity)
     model_pars_outliers <- attr(model_pars_fit, 'outliers')
   } else {
     model_pars_fit <- model_pars
@@ -659,7 +659,7 @@ get_model_pars_nonreg <- function(genes, bin_size, model_pars_fit, regressor_dat
 reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, cell_attr,
                            batch_var, cells_step1, genes_step1, umi, bw_adjust, gmean_eps,
                            theta_regularization, exclude_poisson = FALSE, 
-                           fix_intercept = FALSE, fix_slope = FALSE, verbosity = 0) {
+                           fix_intercept = FALSE, fix_slope = FALSE, use_geometric_mean_offset = FALSE, verbosity = 0) {
   genes <- names(genes_log_gmean)
   if (exclude_poisson | fix_slope | fix_intercept){
     # exclude this from the fitting procedure entirely
@@ -853,8 +853,17 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
     if (verbosity > 0) {
       message(paste0('Replacing regularized parameter ', col, ' by offset'))
     }
-    stopifnot(col %in% colnames(vst_out_offset))
-    model_pars_fit[all_genes, col] <- vst_out_offset[all_genes, col] 
+    #stopifnot(col %in% colnames(vst_out_offset))
+    #model_pars_fit[all_genes, col] <- vst_out_offset[all_genes, col] 
+    gene_mean <- rowMeans(umi)
+    mean_cell_sum <- mean(colSums(umi))
+    intercept_fixed <- log(gene_mean)[all_genes] - log(mean_cell_sum)
+    if (use_geometric_mean_offset){
+      gene_gmean <- row_gmean(umi)
+      intercept_fixed <- log(gene_gmean)[all_genes] - log(mean_cell_sum)
+    }
+    model_pars_fit[all_genes, col] <- intercept_fixed
+    
   }
   
   if (fix_slope){
