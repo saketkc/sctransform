@@ -124,6 +124,7 @@ vst <- function(umi,
                 use_geometric_mean_offset = FALSE,
                 fix_intercept = FALSE,
                 fix_slope = FALSE,
+                scale_factor = NA,
                 verbosity = 2,
                 verbose = NULL,
                 show_progress = NULL) {
@@ -376,7 +377,7 @@ vst <- function(umi,
     if (residual_type != 'pearson') {
       message("Will not return corrected UMI because residual type is not set to 'pearson'")
     } else {
-      rv$umi_corrected <- sctransform::correct(rv, do_round = TRUE, do_pos = TRUE,
+      rv$umi_corrected <- sctransform::correct(rv, do_round = TRUE, do_pos = TRUE, scale_factor = scale_factor,
                                                verbosity = verbosity)
       rv$umi_corrected <- as(object = rv$umi_corrected, Class = 'dgCMatrix')
     }
