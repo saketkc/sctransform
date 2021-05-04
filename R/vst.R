@@ -710,7 +710,7 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
                           method = "offset", 
                           return_gene_attr = FALSE, 
                           theta_given = Inf, 
-                          verbosity = 0)$model_pars_fit
+                          verbosity = verbosity)$model_pars_fit
     dispersion_par <- rep(0, dim(vst_out_offset)[1])
     vst_out_offset <- cbind(vst_out_offset, dispersion_par)
   }
