@@ -672,7 +672,7 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
     # at the regularization step
     # then before returning, just 
     if (is.null(genes_amean)) gene_amean <- rowMeans(umi)
-    if (is.null(genes_avar)) genes_var <- row_var(umi)
+    if (is.null(genes_var)) genes_var <- row_var(umi)
     
     genes_amean_step1 <- genes_amean[genes_step1]
     genes_var_step1 <- genes_var[genes_step1]
@@ -708,14 +708,19 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
     
     # Call offset model with theta=inf 
     # only the slope and intercept are used downstream
-    vst_out_offset <- vst(umi = umi,
-                          cell_attr = cell_attr,
-                          n_genes = NULL, 
-                          n_cells = NULL,
-                          method = "offset", 
-                          return_gene_attr = FALSE, 
-                          theta_given = Inf, 
-                          verbosity = verbosity)$model_pars_fit
+    mean_cell_sum <- mean(colSums(umi))
+    vst_out_offset <- cbind(rep(Inf, length(all_poisson_genes)),
+                            log(genes_amean[all_poisson_genes]) - log(mean_cell_sum),
+                            rep(log(10), length(all_poisson_genes) ))
+    dimnames(vst_out_offset) <- list(all_poisson_genes, c('theta', '(Intercept)', 'log_umi'))
+    #vst_out_offset <- vst(umi = umi,
+    #                      cell_attr = cell_attr,
+    #                      n_genes = NULL, 
+    #                      n_cells = NULL,
+    #                      method = "offset", 
+    #                      return_gene_attr = FALSE, 
+    #                      theta_given = Inf, 
+    #                      verbosity = verbosity)$model_pars_fit
     dispersion_par <- rep(0, dim(vst_out_offset)[1])
     vst_out_offset <- cbind(vst_out_offset, dispersion_par)
   }
@@ -878,8 +883,9 @@ reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, c
     if (verbosity > 0) {
       message(paste0('Replacing regularized parameter ', col, ' by offset'))
     }
-    stopifnot(col %in% colnames(vst_out_offset))
-    model_pars_fit[all_genes, col] <- vst_out_offset[all_genes, col] 
+    #stopifnot(col %in% colnames(vst_out_offset))
+    #model_pars_fit[all_genes, col] <- vst_out_offset[all_genes, col] 
+    model_pars_fit[all_genes, col] <- rep(log(10), length(all_genes))
   }
   
   attr(model_pars_fit, 'outliers') <- outliers
