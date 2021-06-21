@@ -220,6 +220,9 @@ vst <- function(umi,
     genes_log_gmean_step1 <- genes_log_gmean
   }
   
+  genes_amean <- NULL
+  genes_var <- NULL
+  
   # Exclude known poisson genes from the learning step
   if (do_regularize && exclude_poisson){       
     genes_amean <- rowMeans(umi)
@@ -288,7 +291,8 @@ vst <- function(umi,
   if (do_regularize) {
     model_pars_fit <- reg_model_pars(model_pars, genes_log_gmean_step1, genes_log_gmean, cell_attr,
                                      batch_var, cells_step1, genes_step1, umi, bw_adjust, gmean_eps,
-                                     theta_regularization, exclude_poisson, fix_intercept, fix_slope, use_geometric_mean_offset, verbosity)
+                                     theta_regularization, genes_amean, genes_var, 
+                                     exclude_poisson, fix_intercept, fix_slope, use_geometric_mean_offset, verbosity)
     model_pars_outliers <- attr(model_pars_fit, 'outliers')
   } else {
     model_pars_fit <- model_pars
@@ -659,15 +663,16 @@ get_model_pars_nonreg <- function(genes, bin_size, model_pars_fit, regressor_dat
 
 reg_model_pars <- function(model_pars, genes_log_gmean_step1, genes_log_gmean, cell_attr,
                            batch_var, cells_step1, genes_step1, umi, bw_adjust, gmean_eps,
-                           theta_regularization, exclude_poisson = FALSE, 
+                           theta_regularization, 
+                           genes_amean = NULL, genes_var = NULL, exclude_poisson = FALSE, 
                            fix_intercept = FALSE, fix_slope = FALSE, use_geometric_mean_offset = FALSE, verbosity = 0) {
   genes <- names(genes_log_gmean)
   if (exclude_poisson | fix_slope | fix_intercept){
     # exclude this from the fitting procedure entirely
     # at the regularization step
     # then before returning, just 
-    genes_amean <- rowMeans(umi)
-    genes_var <- row_var(umi)
+    if (is.null(genes_amean)) gene_amean <- rowMeans(umi)
+    if (is.null(genes_avar)) genes_var <- row_var(umi)
     
     genes_amean_step1 <- genes_amean[genes_step1]
     genes_var_step1 <- genes_var[genes_step1]
